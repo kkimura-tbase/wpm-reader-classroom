@@ -345,14 +345,23 @@
 
 .notes .canvas-wrap {
   height: max(560px, calc(100svh - 310px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  -webkit-overflow-scrolling: touch;
 }
 
 .notes .toolrow {
+  position: sticky;
+  top: 78px;
+  z-index: 8;
   height: auto;
   min-height: 62px;
   flex-wrap: wrap;
   gap: 8px;
   padding-block: 8px;
+  background: rgba(255,255,255,.97);
+  box-shadow: 0 2px 8px #16212b0a;
 }
 
 .notes .tools {
@@ -412,6 +421,64 @@
   -webkit-touch-callout: none;
 }
 
+.canvas-stage {
+  position: relative;
+  min-width: 1px;
+  min-height: 1px;
+  background-color: #fff;
+  background-image: linear-gradient(#e7e7e4 1px, transparent 1px);
+  background-size: 100% 34px;
+  transform-origin: 0 0;
+}
+
+.canvas-stage canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas-wrap canvas.pan-input {
+  cursor: grab;
+}
+
+.canvas-wrap canvas.pan-input:active {
+  cursor: grabbing;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 4px;
+  padding-right: 8px;
+  border-right: 1px solid #d9d7cf;
+}
+
+.zoom-controls > span {
+  margin-right: 2px;
+  color: #7b848b;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.history .zoom-controls button {
+  min-width: 32px;
+  padding-inline: 8px;
+  border-color: #cfd3d5;
+  background: #fff;
+  font-weight: 800;
+}
+
+.history .zoom-controls .zoom-value {
+  min-width: 54px;
+  color: #3157d5;
+  font: 700 10px var(--font-mono);
+}
+
+.history button:disabled {
+  cursor: default;
+  opacity: .4;
+}
+
 .history .save-note {
   border-color: #3157d5;
   background: #3157d5;
@@ -421,11 +488,14 @@
 }
 
 @media (max-width: 760px) {
+  .notes .toolrow { top: 68px; }
   .history .save-note { padding-inline: 10px; }
   .notes .tools { flex-basis: 100%; }
   .notes .history { width: 100%; justify-content: flex-end; }
   .input-modes { width: 100%; margin: 2px 0 0; padding: 7px 0 0; border-top: 1px solid #d9d7cf; border-left: 0; }
   .input-modes button { flex: 1; }
+  .zoom-controls { margin-right: auto; }
+  .zoom-controls > span { display: inline; }
   .notes.shell-wide { width: 96vw; padding-top: 24px; }
   .notes .canvas-wrap { height: max(480px, calc(100svh - 330px)); }
   .qr-backdrop { padding: 10px; }

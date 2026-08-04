@@ -14,14 +14,24 @@ const COLORS = [
   { value: "#6f7b84", label: "グレー" },
 ] as const;
 const MAX_ERASER_SIZE = 48;
+const MIN_CANVAS_ZOOM = 0.6;
+const MAX_CANVAS_ZOOM = 3;
+const CANVAS_ZOOM_STEP = 0.25;
 const MAX_WORDS = 1000;
 const MAX_TEXT_CHARS = 12000;
+const clampCanvasZoom = (value: number) => Math.min(MAX_CANVAS_ZOOM, Math.max(MIN_CANVAS_ZOOM, value));
 type Tab = "setup" | "reader" | "notes";
 type SourceMode = "paste" | "shared";
 type DrawingInputMode = "stylus" | "all";
 type LessonPackage = { v: 1; title: string; text: string; wpm: number };
 type CanvasPoint = { x: number; y: number };
 type CanvasSnapshot = Promise<string>;
+type CanvasPinch = {
+  distance: number;
+  zoom: number;
+  contentX: number;
+  contentY: number;
+};
 
 const bytesToBase64Url = (bytes: Uint8Array) => {
   let binary = "";
@@ -97,13 +107,20 @@ export default function Home() {
   const [eraserSize, setEraserSize] = useState(MAX_ERASER_SIZE);
   const [eraser, setEraser] = useState(false);
   const [inputMode, setInputMode] = useState<DrawingInputMode>("stylus");
+  const [panMode, setPanMode] = useState(false);
+  const [canvasZoom, setCanvasZoom] = useState(1);
   const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const canvasStageRef = useRef<HTMLDivElement>(null);
+  const canvasBaseSizeRef = useRef({ width: 0, height: 0 });
+  const canvasZoomRef = useRef(1);
+  const pinchRef = useRef<CanvasPinch | null>(null);
   const drawingRef = useRef(false);
   const drawingPointerRef = useRef<number | null>(null);
   const scrollPointerRef = useRef<number | null>(null);
+  const scrollLastXRef = useRef(0);
   const scrollLastYRef = useRef(0);
   const stylusTouchRef = useRef<number | null>(null);
   const lastRef = useRef<CanvasPoint>({ x: 0, y: 0 });
@@ -314,26 +331,58 @@ export default function Home() {
     if (!data) return;
     const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height); img.src = data;
   }, []);
+  const layoutCanvasAtZoom = useCallback((zoom: number) => {
+    const canvas = canvasRef.current, stage = canvasStageRef.current;
+    const { width, height } = canvasBaseSizeRef.current;
+    if (!canvas || !stage || !width || !height) return;
+    const displayWidth = Math.round(width * zoom * 100) / 100;
+    const displayHeight = Math.round(height * zoom * 100) / 100;
+    canvas.style.width = `${displayWidth}px`; canvas.style.height = `${displayHeight}px`;
+    stage.style.width = `${displayWidth}px`; stage.style.height = `${displayHeight}px`;
+  }, []);
+  const applyCanvasZoom = useCallback((value: number) => {
+    const next = Math.round(clampCanvasZoom(value) * 100) / 100;
+    canvasZoomRef.current = next;
+    setCanvasZoom(current => current === next ? current : next);
+    layoutCanvasAtZoom(next);
+    return next;
+  }, [layoutCanvasAtZoom]);
+  const zoomCanvasTo = useCallback((value: number, clientX?: number, clientY?: number) => {
+    const wrap = canvasWrapRef.current; if (!wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const localX = clientX === undefined ? wrap.clientWidth / 2 : clientX - rect.left;
+    const localY = clientY === undefined ? wrap.clientHeight / 2 : clientY - rect.top;
+    const previous = canvasZoomRef.current;
+    const contentX = (wrap.scrollLeft + localX) / previous;
+    const contentY = (wrap.scrollTop + localY) / previous;
+    const next = applyCanvasZoom(value);
+    wrap.scrollLeft = contentX * next - localX;
+    wrap.scrollTop = contentY * next - localY;
+  }, [applyCanvasZoom]);
   const resizeCanvas = useCallback(() => {
     const canvas = canvasRef.current, wrap = canvasWrapRef.current; if (!canvas || !wrap) return;
     if (drawingRef.current) return;
     const width = Math.round(wrap.clientWidth), height = Math.round(wrap.clientHeight);
+    canvasBaseSizeRef.current = { width, height };
+    layoutCanvasAtZoom(canvasZoomRef.current);
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     const pixelWidth = Math.round(width * ratio), pixelHeight = Math.round(height * ratio);
     if (!width || !height || (canvas.dataset.ready === "true" && canvas.width === pixelWidth && canvas.height === pixelHeight)) return;
     const old = canvas.dataset.ready === "true" ? canvas.toDataURL() : localStorage.getItem("wpm-reader-drawing");
     canvas.width = pixelWidth; canvas.height = pixelHeight;
-    canvas.style.width = `${width}px`; canvas.style.height = `${height}px`;
     canvas.dataset.ready = "true";
     committedSnapshotRef.current = Promise.resolve(old || "");
     restoreCanvas(old);
-  }, [restoreCanvas]);
+  }, [layoutCanvasAtZoom, restoreCanvas]);
   useEffect(() => {
     if (tab !== "notes") return;
     const id = requestAnimationFrame(resizeCanvas);
+    const observer = new ResizeObserver(resizeCanvas);
+    if (canvasWrapRef.current) observer.observe(canvasWrapRef.current);
     window.addEventListener("resize", resizeCanvas);
     return () => {
       cancelAnimationFrame(id);
+      observer.disconnect();
       window.removeEventListener("resize", resizeCanvas);
     };
   }, [tab, resizeCanvas]);
@@ -374,14 +423,16 @@ export default function Home() {
     const style = drawingStyleRef.current;
     ctx.beginPath(); ctx.moveTo(lastRef.current.x, lastRef.current.y);
     for (const point of drawablePoints) ctx.lineTo(point.x, point.y);
-    ctx.lineCap="round"; ctx.lineJoin="round"; ctx.lineWidth=style.size*(canvas.width/canvas.clientWidth);
+    const baseWidth = canvasBaseSizeRef.current.width || canvas.clientWidth;
+    ctx.lineCap="round"; ctx.lineJoin="round"; ctx.lineWidth=style.size*(canvas.width/baseWidth);
     ctx.globalCompositeOperation = style.eraser ? "destination-out" : "source-over"; ctx.strokeStyle=style.color; ctx.stroke();
     lastRef.current=drawablePoints.at(-1)!;
   };
   const drawContactPoint = (canvas: HTMLCanvasElement, point: CanvasPoint) => {
     const ctx = canvas.getContext("2d"); if (!ctx) return;
     const style = drawingStyleRef.current;
-    const radius = Math.max(1, style.size*(canvas.width/canvas.clientWidth)/2);
+    const baseWidth = canvasBaseSizeRef.current.width || canvas.clientWidth;
+    const radius = Math.max(1, style.size*(canvas.width/baseWidth)/2);
     ctx.save();
     ctx.globalCompositeOperation = style.eraser ? "destination-out" : "source-over";
     ctx.fillStyle = style.color;
@@ -391,6 +442,21 @@ export default function Home() {
   const releaseCapturedPointer = (canvas: HTMLCanvasElement, pointerId: number) => {
     try { if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId); }
     catch { /* The browser may have already released this pointer. */ }
+  };
+  const beginPanningAt = (canvas: HTMLCanvasElement, pointerId: number, clientX: number, clientY: number, capturePointer = false) => {
+    if (drawingPointerRef.current !== null || scrollPointerRef.current !== null) return;
+    if (capturePointer) {
+      try { canvas.setPointerCapture(pointerId); }
+      catch { /* Direct hit testing can continue the pan. */ }
+    }
+    scrollPointerRef.current = pointerId;
+    scrollLastXRef.current = clientX; scrollLastYRef.current = clientY;
+  };
+  const movePanningAt = (clientX: number, clientY: number) => {
+    const wrap = canvasWrapRef.current; if (!wrap) return;
+    wrap.scrollLeft += scrollLastXRef.current - clientX;
+    wrap.scrollTop += scrollLastYRef.current - clientY;
+    scrollLastXRef.current = clientX; scrollLastYRef.current = clientY;
   };
   const beginDrawingAt = (canvas: HTMLCanvasElement, pointerId: number, clientX: number, clientY: number, capturePointer = false) => {
     if (scrollPointerRef.current !== null) {
@@ -419,32 +485,29 @@ export default function Home() {
     committedSnapshotRef.current=persistCanvas(); requestAnimationFrame(resizeCanvas);
   };
   const drawStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (pinchRef.current) { e.preventDefault(); return; }
     const looksLikePen = e.pointerType === "pen" || (!e.pointerType && e.pressure > 0);
     if (stylusTouchRef.current !== null && looksLikePen) return;
-    if (inputMode === "stylus" && e.pointerType === "touch" && !looksLikePen) {
-      if (drawingPointerRef.current !== null || scrollPointerRef.current !== null) return;
+    if (panMode || (inputMode === "stylus" && e.pointerType === "touch" && !looksLikePen)) {
       e.preventDefault();
-      try { e.currentTarget.setPointerCapture(e.pointerId); }
-      catch { /* Touch scrolling still works while the pointer remains over the canvas. */ }
-      scrollPointerRef.current = e.pointerId;
-      scrollLastYRef.current = e.clientY;
+      beginPanningAt(e.currentTarget, e.pointerId, e.clientX, e.clientY, true);
       return;
     }
     if (drawingPointerRef.current !== null) return;
     beginDrawing(e);
   };
   const drawMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (pinchRef.current) { e.preventDefault(); return; }
     const looksLikePen = e.pointerType === "pen" || (!e.pointerType && e.pressure > 0);
     if (stylusTouchRef.current !== null && looksLikePen) { e.preventDefault(); return; }
     let recoveredFromMove = false;
     if (scrollPointerRef.current === e.pointerId) {
       e.preventDefault();
-      window.scrollBy(0, scrollLastYRef.current - e.clientY);
-      scrollLastYRef.current = e.clientY;
+      movePanningAt(e.clientX, e.clientY);
       return;
     }
     if (!drawingRef.current || drawingPointerRef.current !== e.pointerId) {
-      const pointerCanDraw = inputMode === "all" || e.pointerType !== "touch";
+      const pointerCanDraw = !panMode && (inputMode === "all" || e.pointerType !== "touch");
       const pointerIsInContact = e.buttons !== 0 || e.pressure > 0;
       if (drawingPointerRef.current === null && pointerCanDraw && pointerIsInContact) { beginDrawing(e); recoveredFromMove = true; }
       else return;
@@ -456,7 +519,7 @@ export default function Home() {
     drawCanvasPoints(canvas, events.slice(recoveredFromMove ? 1 : 0).map(event => canvasPoint(canvas, event.clientX, event.clientY)));
   };
   const drawEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (scrollPointerRef.current === e.pointerId) { scrollPointerRef.current=null; return; }
+    if (scrollPointerRef.current === e.pointerId) { scrollPointerRef.current=null; releaseCapturedPointer(e.currentTarget, e.pointerId); return; }
     if (drawingPointerRef.current !== e.pointerId) return;
     if (stylusTouchRef.current !== null && e.pointerType === "pen") { e.preventDefault(); return; }
     e.preventDefault();
@@ -465,32 +528,81 @@ export default function Home() {
   useEffect(() => {
     if (tab !== "notes") return;
     const canvas = canvasRef.current; if (!canvas) return;
+    const wrap = canvasWrapRef.current; if (!wrap) return;
     const isApplePencilTouch = (touch: Touch) => {
       const touchType = (touch as Touch & { touchType?: string }).touchType;
       return touchType === "stylus" || touchType === "pencil" || touch.force > 0;
     };
+    const fingerTouches = (touches: TouchList) => Array.from(touches).filter(touch => !isApplePencilTouch(touch));
+    const touchDistance = (first: Touch, second: Touch) => Math.hypot(second.clientX-first.clientX, second.clientY-first.clientY);
+    const touchCenter = (first: Touch, second: Touch) => ({ x:(first.clientX+second.clientX)/2, y:(first.clientY+second.clientY)/2 });
     const touchPointerId = (identifier: number) => -(identifier+1);
     const findActiveTouch = (touches: TouchList) => Array.from(touches).find(touch => touch.identifier === stylusTouchRef.current);
     const handleStylusTouchStart = (event: TouchEvent) => {
+      const fingers = fingerTouches(event.touches);
+      if (inputMode === "stylus" && fingers.length >= 2) {
+        event.preventDefault();
+        if (scrollPointerRef.current !== null) {
+          releaseCapturedPointer(canvas, scrollPointerRef.current);
+          scrollPointerRef.current=null;
+        }
+        const center = touchCenter(fingers[0], fingers[1]);
+        const rect = wrap.getBoundingClientRect();
+        const localX = center.x-rect.left, localY = center.y-rect.top;
+        const zoom = canvasZoomRef.current;
+        pinchRef.current = {
+          distance:Math.max(1,touchDistance(fingers[0],fingers[1])), zoom,
+          contentX:(wrap.scrollLeft+localX)/zoom, contentY:(wrap.scrollTop+localY)/zoom,
+        };
+        return;
+      }
       const touch = Array.from(event.changedTouches).find(isApplePencilTouch); if (!touch) return;
       event.preventDefault();
       stylusTouchRef.current=touch.identifier;
-      if (drawingPointerRef.current === null) beginDrawingAt(canvas, touchPointerId(touch.identifier), touch.clientX, touch.clientY);
+      const pointerId = touchPointerId(touch.identifier);
+      if (panMode) beginPanningAt(canvas, pointerId, touch.clientX, touch.clientY);
+      else if (drawingPointerRef.current === null) beginDrawingAt(canvas, pointerId, touch.clientX, touch.clientY);
     };
     const handleStylusTouchMove = (event: TouchEvent) => {
+      if (pinchRef.current) {
+        const fingers = fingerTouches(event.touches); if (fingers.length < 2) return;
+        event.preventDefault();
+        const pinch = pinchRef.current;
+        const center = touchCenter(fingers[0],fingers[1]);
+        const rect = wrap.getBoundingClientRect();
+        const localX = center.x-rect.left, localY = center.y-rect.top;
+        const next = applyCanvasZoom(pinch.zoom*touchDistance(fingers[0],fingers[1])/pinch.distance);
+        wrap.scrollLeft=pinch.contentX*next-localX;
+        wrap.scrollTop=pinch.contentY*next-localY;
+        return;
+      }
       if (stylusTouchRef.current === null) return;
       const touch = findActiveTouch(event.touches) ?? findActiveTouch(event.changedTouches); if (!touch) return;
       event.preventDefault();
-      if (drawingPointerRef.current === null) beginDrawingAt(canvas, touchPointerId(touch.identifier), touch.clientX, touch.clientY);
-      drawCanvasPoints(canvas, [canvasPoint(canvas, touch.clientX, touch.clientY)]);
+      const pointerId = touchPointerId(touch.identifier);
+      if (panMode) {
+        if (scrollPointerRef.current === null) beginPanningAt(canvas, pointerId, touch.clientX, touch.clientY);
+        if (scrollPointerRef.current === pointerId) movePanningAt(touch.clientX,touch.clientY);
+      } else {
+        if (drawingPointerRef.current === null) beginDrawingAt(canvas, pointerId, touch.clientX, touch.clientY);
+        drawCanvasPoints(canvas, [canvasPoint(canvas, touch.clientX, touch.clientY)]);
+      }
     };
     const handleStylusTouchEnd = (event: TouchEvent) => {
-      if (stylusTouchRef.current === null) return;
-      const touch = findActiveTouch(event.changedTouches); if (!touch) return;
-      event.preventDefault();
-      const pointerId = drawingPointerRef.current;
-      if (pointerId !== null) finishDrawing(canvas, pointerId, event.type === "touchend" ? canvasPoint(canvas, touch.clientX, touch.clientY) : undefined);
-      stylusTouchRef.current=null;
+      const touch = stylusTouchRef.current === null ? undefined : findActiveTouch(event.changedTouches);
+      if (touch) {
+        event.preventDefault();
+        const pointerId = touchPointerId(touch.identifier);
+        if (panMode) {
+          if (scrollPointerRef.current === pointerId) scrollPointerRef.current=null;
+        } else if (drawingPointerRef.current !== null) {
+          finishDrawing(canvas, drawingPointerRef.current, event.type === "touchend" ? canvasPoint(canvas, touch.clientX, touch.clientY) : undefined);
+        }
+        stylusTouchRef.current=null;
+      }
+      if (pinchRef.current && fingerTouches(event.touches).length < 2) {
+        event.preventDefault(); pinchRef.current=null;
+      }
     };
     canvas.addEventListener("touchstart", handleStylusTouchStart, { passive: false });
     canvas.addEventListener("touchmove", handleStylusTouchMove, { passive: false });
@@ -501,9 +613,10 @@ export default function Home() {
       canvas.removeEventListener("touchmove", handleStylusTouchMove);
       canvas.removeEventListener("touchend", handleStylusTouchEnd);
       canvas.removeEventListener("touchcancel", handleStylusTouchEnd);
-      stylusTouchRef.current=null;
+      stylusTouchRef.current=null; pinchRef.current=null;
+      if (scrollPointerRef.current !== null && scrollPointerRef.current < 0) scrollPointerRef.current=null;
     };
-  }, [tab, inputMode, eraser, eraserSize, penSize, penColor]);
+  }, [tab, inputMode, panMode, eraser, eraserSize, penSize, penColor, applyCanvasZoom]);
   const undo = async () => {
     const prev=undoStack.at(-1); if (!prev || historyBusyRef.current) return;
     historyBusyRef.current=true;
@@ -531,7 +644,7 @@ export default function Home() {
     ctx.drawImage(canvas, 0, 0);
     const anchor = document.createElement("a"); anchor.href=exportCanvas.toDataURL("image/png"); anchor.download="reading-note.png"; anchor.click();
   };
-  const resetAll = () => { if (!confirm("教材・設定・メモをすべてリセットしますか？")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem("wpm-reader-drawing"); history.replaceState(null,"",`${location.pathname}${location.search}`); setText(SAMPLE); setWpm(160); setSharedLesson(null); setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
+  const resetAll = () => { if (!confirm("教材・設定・メモをすべてリセットしますか？")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem("wpm-reader-drawing"); history.replaceState(null,"",`${location.pathname}${location.search}`); setText(SAMPLE); setWpm(160); setSharedLesson(null); setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
 
   return <main>
     <header className="topbar">
@@ -573,7 +686,26 @@ export default function Home() {
 
     {tab === "notes" && <section className="notes shell-wide">
       <div className="notes-head"><div><div className="eyebrow">QUICK REFLECTION</div><h1>Capture what<br/>stayed with you.</h1></div><p>It doesn’t have to be perfect.<br/>Start with the words, ideas, or images you remember.</p></div>
-      <div className="notes-grid"><div className="paper"><div className="toolrow"><div className="tools"><button className={!eraser?"on":""} onClick={()=>setEraser(false)}>✎ <span>ペン</span></button><button className={eraser?"on":""} onClick={()=>setEraser(true)}>▱ <span>消しゴム</span></button>{COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false)}} aria-label={`${color.label}のペン`}/>) }<label className="size">細<input type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label><div className="input-modes" role="group" aria-label="手書き入力方法"><span>入力</span><button className={inputMode==="stylus"?"on":""} onClick={()=>setInputMode("stylus")} aria-pressed={inputMode==="stylus"} aria-label="画面用ペンまたはマウスで書く。指はスクロールに使用">ペン・マウス</button><button className={inputMode==="all"?"on":""} onClick={()=>setInputMode("all")} aria-pressed={inputMode==="all"} aria-label="指、画面用ペン、マウスで書く">指も使う</button></div></div><div className="history"><button onClick={undo} disabled={!undoStack.length}>↶</button><button onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button></div></div><div className="canvas-wrap" ref={canvasWrapRef}><canvas className={inputMode==="all"?"finger-input":"stylus-input"} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} aria-label="手書きメモ用キャンバス"/><span>{inputMode==="stylus"?"PEN / MOUSE / 指はスクロール":"TOUCH / PEN / MOUSE / すべて筆記"}</span></div></div></div>
+      <div className="notes-grid"><div className="paper">
+        <div className="toolrow">
+          <div className="tools">
+            <button className={!panMode&&!eraser?"on":""} onClick={()=>{setPanMode(false);setEraser(false)}}>✎ <span>ペン</span></button>
+            <button className={!panMode&&eraser?"on":""} onClick={()=>{setPanMode(false);setEraser(true)}}>▱ <span>消しゴム</span></button>
+            <button className={panMode?"on":""} onClick={()=>setPanMode(value=>!value)} aria-pressed={panMode}>✥ <span>移動</span></button>
+            {COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false);setPanMode(false)}} aria-label={`${color.label}のペン`}/>) }
+            <label className="size">細<input type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label>
+            <div className="input-modes" role="group" aria-label="手書き入力方法"><span>入力</span><button className={inputMode==="stylus"?"on":""} onClick={()=>{setInputMode("stylus");setPanMode(false)}} aria-pressed={inputMode==="stylus"} aria-label="画面用ペンまたはマウスで書く。指はキャンバスの移動とピンチ拡大に使用">ペン・マウス</button><button className={inputMode==="all"?"on":""} onClick={()=>{setInputMode("all");setPanMode(false)}} aria-pressed={inputMode==="all"} aria-label="指、画面用ペン、マウスで書く。拡大はボタンを使用">指も使う</button></div>
+          </div>
+          <div className="history">
+            <div className="zoom-controls" role="group" aria-label="キャンバスの拡大率"><span>キャンバス</span><button onClick={()=>zoomCanvasTo(canvasZoomRef.current-CANVAS_ZOOM_STEP)} disabled={canvasZoom<=MIN_CANVAS_ZOOM} aria-label="キャンバスを縮小">−</button><button className="zoom-value" onClick={()=>zoomCanvasTo(1)} aria-label="キャンバスを100パーセントに戻す">{Math.round(canvasZoom*100)}%</button><button onClick={()=>zoomCanvasTo(canvasZoomRef.current+CANVAS_ZOOM_STEP)} disabled={canvasZoom>=MAX_CANVAS_ZOOM} aria-label="キャンバスを拡大">＋</button></div>
+            <button onClick={undo} disabled={!undoStack.length}>↶</button><button onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button>
+          </div>
+        </div>
+        <div className="canvas-wrap" ref={canvasWrapRef}>
+          <div className="canvas-stage" ref={canvasStageRef}><canvas className={`${inputMode==="all"?"finger-input":"stylus-input"} ${panMode?"pan-input":""}`} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} aria-label="手書きメモ用キャンバス"/></div>
+          <span>{panMode?"MOVE / ドラッグで移動":inputMode==="stylus"?"PEN / MOUSE / 指で移動・2本指で拡大":"TOUCH / PEN / MOUSE / 拡大は上のボタン"}</span>
+        </div>
+      </div></div>
     </section>}
     {qrOpen && <div className="qr-backdrop" onClick={()=>setQrOpen(false)}><section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" onClick={e=>e.stopPropagation()}><button className="qr-close" onClick={()=>setQrOpen(false)} aria-label="QRコードを閉じる">×</button><div className="eyebrow">SHARE WITH CLASS</div><h2 id="qr-title">{teacherTitle || "Reading lesson"}</h2><p>生徒はカメラでQRコードを読み取ってください。</p>{qrDataUrl?<img src={qrDataUrl} alt={`${teacherTitle || "教材"}の共有QRコード`}/>:<div className="qr-error">{qrError || "QRコードを作成できませんでした。"}</div>}<div className="qr-actions"><button onClick={copyExistingLink}>リンクをコピー</button><button className="primary" onClick={saveQrImage} disabled={!qrDataUrl}>QR画像を保存 ↓</button></div></section></div>}
   </main>;
