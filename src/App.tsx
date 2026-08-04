@@ -375,33 +375,58 @@ export default function Home() {
     ctx.globalCompositeOperation = style.eraser ? "destination-out" : "source-over"; ctx.strokeStyle=style.color; ctx.stroke();
     lastRef.current=points.at(-1)!;
   };
-  const drawStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (drawingPointerRef.current !== null || scrollPointerRef.current !== null) return;
-    if (inputMode === "stylus" && e.pointerType === "touch") {
-      e.preventDefault();
-      e.currentTarget.setPointerCapture(e.pointerId);
-      scrollPointerRef.current = e.pointerId;
-      scrollLastYRef.current = e.clientY;
-      return;
-    }
+  const releaseCapturedPointer = (canvas: HTMLCanvasElement, pointerId: number) => {
+    try { if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId); }
+    catch { /* The browser may have already released this pointer. */ }
+  };
+  const beginDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = e.currentTarget;
     e.preventDefault();
+    if (scrollPointerRef.current !== null) {
+      const scrollingPointer = scrollPointerRef.current;
+      scrollPointerRef.current = null;
+      releaseCapturedPointer(canvas, scrollingPointer);
+    }
     const beforeStroke = committedSnapshotRef.current;
-    e.currentTarget.setPointerCapture(e.pointerId); drawingRef.current = true; drawingPointerRef.current = e.pointerId; lastRef.current = canvasPoint(e.currentTarget, e.clientX, e.clientY);
+    try { canvas.setPointerCapture(e.pointerId); }
+    catch { /* Implicit capture or normal hit testing can continue the stroke. */ }
+    drawingRef.current = true; drawingPointerRef.current = e.pointerId; lastRef.current = canvasPoint(canvas, e.clientX, e.clientY);
     drawingStyleRef.current = { eraser, size: eraser ? eraserSize : penSize, color: penColor };
     pendingPointsRef.current=[];
     setUndoStack(s => [...s.slice(-19), beforeStroke]); setRedoStack([]);
   };
+  const drawStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (inputMode === "stylus" && e.pointerType === "touch") {
+      if (drawingPointerRef.current !== null || scrollPointerRef.current !== null) return;
+      e.preventDefault();
+      try { e.currentTarget.setPointerCapture(e.pointerId); }
+      catch { /* Touch scrolling still works while the pointer remains over the canvas. */ }
+      scrollPointerRef.current = e.pointerId;
+      scrollLastYRef.current = e.clientY;
+      return;
+    }
+    if (drawingPointerRef.current !== null) return;
+    beginDrawing(e);
+  };
   const drawMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    let recoveredFromMove = false;
     if (scrollPointerRef.current === e.pointerId) {
       e.preventDefault();
       window.scrollBy(0, scrollLastYRef.current - e.clientY);
       scrollLastYRef.current = e.clientY;
       return;
     }
-    if (!drawingRef.current || drawingPointerRef.current !== e.pointerId) return; e.preventDefault(); const canvas = e.currentTarget;
+    if (!drawingRef.current || drawingPointerRef.current !== e.pointerId) {
+      const pointerCanDraw = inputMode === "all" || e.pointerType !== "touch";
+      const pointerIsInContact = e.buttons !== 0 || e.pressure > 0;
+      if (drawingPointerRef.current === null && pointerCanDraw && pointerIsInContact) { beginDrawing(e); recoveredFromMove = true; }
+      else return;
+    }
+    e.preventDefault(); const canvas = e.currentTarget;
     const coalescedEvents = e.nativeEvent.getCoalescedEvents?.();
     const events = coalescedEvents?.length ? coalescedEvents : [e.nativeEvent];
-    for (const event of events) pendingPointsRef.current.push(canvasPoint(canvas, event.clientX, event.clientY));
+    if (recoveredFromMove && events.length) lastRef.current=canvasPoint(canvas, events[0].clientX, events[0].clientY);
+    for (const event of events.slice(recoveredFromMove ? 1 : 0)) pendingPointsRef.current.push(canvasPoint(canvas, event.clientX, event.clientY));
     if (drawFrameRef.current === null) {
       drawFrameRef.current=requestAnimationFrame(() => {
         drawFrameRef.current=null;
@@ -484,7 +509,7 @@ export default function Home() {
 
     {tab === "notes" && <section className="notes shell-wide">
       <div className="notes-head"><div><div className="eyebrow">QUICK REFLECTION</div><h1>Capture what<br/>stayed with you.</h1></div><p>It doesn’t have to be perfect.<br/>Start with the words, ideas, or images you remember.</p></div>
-      <div className="notes-grid"><div className="paper"><div className="toolrow"><div className="tools"><button className={!eraser?"on":""} onClick={()=>setEraser(false)}>✎ <span>ペン</span></button><button className={eraser?"on":""} onClick={()=>setEraser(true)}>▱ <span>消しゴム</span></button>{COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false)}} aria-label={`${color.label}のペン`}/>) }<label className="size">細<input type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label><div className="input-modes" role="group" aria-label="手書き入力方法"><span>入力</span><button className={inputMode==="stylus"?"on":""} onClick={()=>setInputMode("stylus")} aria-pressed={inputMode==="stylus"} aria-label="画面用ペンまたはマウスで書く。指はスクロールに使用">ペン・マウス</button><button className={inputMode==="all"?"on":""} onClick={()=>setInputMode("all")} aria-pressed={inputMode==="all"} aria-label="指、画面用ペン、マウスで書く">指も使う</button></div></div><div className="history"><button onClick={undo} disabled={!undoStack.length}>↶</button><button onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button></div></div><div className="canvas-wrap" ref={canvasWrapRef}><canvas className={inputMode==="all"?"finger-input":"stylus-input"} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} onLostPointerCapture={drawEnd} aria-label="手書きメモ用キャンバス"/><span>{inputMode==="stylus"?"PEN / MOUSE / 指はスクロール":"TOUCH / PEN / MOUSE / すべて筆記"}</span></div></div></div>
+      <div className="notes-grid"><div className="paper"><div className="toolrow"><div className="tools"><button className={!eraser?"on":""} onClick={()=>setEraser(false)}>✎ <span>ペン</span></button><button className={eraser?"on":""} onClick={()=>setEraser(true)}>▱ <span>消しゴム</span></button>{COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false)}} aria-label={`${color.label}のペン`}/>) }<label className="size">細<input type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label><div className="input-modes" role="group" aria-label="手書き入力方法"><span>入力</span><button className={inputMode==="stylus"?"on":""} onClick={()=>setInputMode("stylus")} aria-pressed={inputMode==="stylus"} aria-label="画面用ペンまたはマウスで書く。指はスクロールに使用">ペン・マウス</button><button className={inputMode==="all"?"on":""} onClick={()=>setInputMode("all")} aria-pressed={inputMode==="all"} aria-label="指、画面用ペン、マウスで書く">指も使う</button></div></div><div className="history"><button onClick={undo} disabled={!undoStack.length}>↶</button><button onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button></div></div><div className="canvas-wrap" ref={canvasWrapRef}><canvas className={inputMode==="all"?"finger-input":"stylus-input"} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} aria-label="手書きメモ用キャンバス"/><span>{inputMode==="stylus"?"PEN / MOUSE / 指はスクロール":"TOUCH / PEN / MOUSE / すべて筆記"}</span></div></div></div>
     </section>}
     {qrOpen && <div className="qr-backdrop" onClick={()=>setQrOpen(false)}><section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" onClick={e=>e.stopPropagation()}><button className="qr-close" onClick={()=>setQrOpen(false)} aria-label="QRコードを閉じる">×</button><div className="eyebrow">SHARE WITH CLASS</div><h2 id="qr-title">{teacherTitle || "Reading lesson"}</h2><p>生徒はカメラでQRコードを読み取ってください。</p>{qrDataUrl?<img src={qrDataUrl} alt={`${teacherTitle || "教材"}の共有QRコード`}/>:<div className="qr-error">{qrError || "QRコードを作成できませんでした。"}</div>}<div className="qr-actions"><button onClick={copyExistingLink}>リンクをコピー</button><button className="primary" onClick={saveQrImage} disabled={!qrDataUrl}>QR画像を保存 ↓</button></div></section></div>}
   </main>;
