@@ -1,0 +1,437 @@
+.source-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 22px;
+  border-radius: 10px;
+  background: #e8e5dd;
+}
+
+/* Preserve the source's structure while keeping word-level reading progress. */
+.reading-card p {
+  margin: 0;
+  text-indent: 1.55em;
+  white-space: pre-wrap;
+  tab-size: 4;
+}
+
+.reading-card p.source-indented {
+  text-indent: 0;
+}
+
+.reading-card p + p {
+  margin-top: 0.9em;
+}
+
+.reading-card span.reading-space {
+  transition: none;
+}
+
+.source-tabs button {
+  border: 0;
+  border-radius: 7px;
+  padding: 11px 18px;
+  background: transparent;
+  color: #6f7b84;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.source-tabs button.active {
+  background: white;
+  color: #16212b;
+  box-shadow: 0 2px 7px #17212b16;
+}
+
+.class-library {
+  min-height: 250px;
+  padding: 24px;
+  border: 1px solid #d9d7cf;
+  border-radius: 5px;
+  background: #fffefb;
+}
+
+.class-lookup,
+.teacher-form {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.class-lookup label,
+.teacher-form label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  color: #6f7b84;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.class-lookup input,
+.teacher-form input {
+  width: 100%;
+  height: 44px;
+  padding: 0 13px;
+  border: 1px solid #d9d7cf;
+  border-radius: 7px;
+  background: white;
+  outline: none;
+}
+
+.class-lookup input {
+  font: 700 18px var(--font-mono);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.class-lookup .primary,
+.teacher-form .primary {
+  height: 44px;
+  padding: 0 19px;
+  white-space: nowrap;
+}
+
+.library-message {
+  margin: 15px 0 9px;
+  color: #68727a;
+  font-size: 12px;
+}
+
+.text-limit {
+  display: block;
+  margin-top: 7px;
+  color: #7c858c;
+  text-align: right;
+  font: 600 10px var(--font-mono);
+}
+
+.shared-library {
+  display: flex;
+  min-height: 190px;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.shared-material-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px;
+  border: 1px solid #3157d5;
+  border-radius: 9px;
+  background: #f3f5fd;
+}
+
+.shared-material-card span {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shared-material-card strong { font-size: 16px; }
+.shared-material-card small { color: #6f7b84; font-size: 11px; }
+.shared-material-card b { color: #3157d5; font-size: 11px; }
+
+.shared-empty {
+  color: #59646c;
+  text-align: center;
+}
+
+.shared-empty strong { color: #16212b; font-size: 15px; }
+.shared-empty p { margin: 8px 0 0; font-size: 12px; }
+
+.material-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.material-list > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 15px 17px;
+  border: 1px solid #e2e0d9;
+  border-radius: 8px;
+  background: white;
+  text-align: left;
+}
+
+.material-list > button.selected {
+  border-color: #3157d5;
+  background: #f3f5fd;
+}
+
+.material-list span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.material-list strong { font-size: 14px; }
+.material-list small { color: #7c858c; font-size: 10px; }
+.material-list b { color: #3157d5; font-size: 11px; }
+
+.teacher-area {
+  margin-top: 14px;
+  border: 1px solid #d9d7cf;
+  border-radius: 8px;
+  background: #eeece5;
+}
+
+.teacher-toggle {
+  width: 100%;
+  padding: 13px 16px;
+  border: 0;
+  background: transparent;
+  color: #59646c;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.teacher-form {
+  flex-wrap: wrap;
+  padding: 0 16px 16px;
+}
+
+.teacher-form p {
+  width: 100%;
+  margin: 0;
+  color: #7a8389;
+  font-size: 10px;
+}
+
+.teacher-form .share-result {
+  flex-basis: 100%;
+}
+
+.teacher-form .share-result input {
+  font: 11px var(--font-mono);
+}
+
+.teacher-form .share-message {
+  color: #3157d5;
+  font-weight: 700;
+}
+
+.teacher-form .show-qr {
+  flex-basis: 100%;
+  padding: 11px 14px;
+  border: 1px solid #3157d5;
+  border-radius: 7px;
+  background: transparent;
+  color: #3157d5;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.qr-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: #101820d9;
+  backdrop-filter: blur(7px);
+}
+
+.qr-modal {
+  position: relative;
+  display: flex;
+  width: min(760px, 96vw);
+  max-height: 95svh;
+  flex-direction: column;
+  align-items: center;
+  overflow: auto;
+  padding: 34px 38px 30px;
+  border-radius: 18px;
+  background: #fffefb;
+  box-shadow: 0 24px 80px #0005;
+  text-align: center;
+}
+
+.qr-modal h2 {
+  margin: 8px 48px 0;
+  font-size: clamp(24px, 4vw, 40px);
+  line-height: 1.15;
+  letter-spacing: -.035em;
+}
+
+.qr-modal > p {
+  margin: 8px 0 16px;
+  color: #6f7b84;
+  font-size: 13px;
+}
+
+.qr-modal img {
+  display: block;
+  width: min(620px, 70svh, 84vw);
+  height: auto;
+  border: 1px solid #e4e2db;
+  border-radius: 10px;
+  background: white;
+}
+
+.qr-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #eceae4;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.qr-error {
+  width: min(560px, 84vw);
+  padding: 44px 25px;
+  border: 1px solid #e4b9a9;
+  border-radius: 10px;
+  background: #fff4ef;
+  color: #9b4226;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.qr-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.qr-actions button {
+  min-width: 150px;
+  padding: 13px 17px;
+  border: 1px solid #d9d7cf;
+  border-radius: 8px;
+  background: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.qr-actions button.primary {
+  border-color: #3157d5;
+  background: #3157d5;
+}
+
+@media (max-width: 760px) {
+  .source-tabs { display: flex; }
+  .source-tabs button { flex: 1; padding: 11px 8px; }
+  .class-library { padding: 16px; }
+  .class-lookup { align-items: stretch; flex-direction: column; }
+  .teacher-form { align-items: stretch; flex-direction: column; }
+  .teacher-form label { width: 100%; }
+}
+
+.notes .notes-grid {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 24px;
+}
+
+.notes.shell-wide {
+  width: min(1500px, 97vw);
+  padding-top: 30px;
+}
+
+.notes .canvas-wrap {
+  height: max(560px, calc(100svh - 310px));
+}
+
+.notes .toolrow {
+  height: auto;
+  min-height: 62px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-block: 8px;
+}
+
+.notes .tools {
+  flex: 1 1 620px;
+  flex-wrap: wrap;
+}
+
+.notes .history {
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.notes .size b {
+  min-width: 22px;
+  color: #59646c;
+  font: 700 10px var(--font-mono);
+  text-align: right;
+}
+
+.input-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 5px;
+  padding-left: 10px;
+  border-left: 1px solid #d9d7cf;
+}
+
+.input-modes > span {
+  margin-right: 2px;
+  color: #7b848b;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.input-modes button {
+  height: 32px;
+  padding-inline: 10px;
+  border: 1px solid #d9d7cf;
+  background: #fff;
+  color: #68727a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.input-modes button.on {
+  border-color: #3157d5;
+  background: #e3e7f7;
+  color: #3157d5;
+}
+
+.canvas-wrap canvas.stylus-input {
+  touch-action: pan-x pan-y;
+}
+
+.canvas-wrap canvas.finger-input {
+  touch-action: none;
+}
+
+.history .save-note {
+  border-color: #3157d5;
+  background: #3157d5;
+  color: white;
+  padding-inline: 14px;
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .history .save-note { padding-inline: 10px; }
+  .notes .tools { flex-basis: 100%; }
+  .notes .history { width: 100%; justify-content: flex-end; }
+  .input-modes { width: 100%; margin: 2px 0 0; padding: 7px 0 0; border-top: 1px solid #d9d7cf; border-left: 0; }
+  .input-modes button { flex: 1; }
+  .notes.shell-wide { width: 96vw; padding-top: 24px; }
+  .notes .canvas-wrap { height: max(480px, calc(100svh - 330px)); }
+  .qr-backdrop { padding: 10px; }
+  .qr-modal { padding: 28px 15px 20px; }
+  .qr-modal h2 { margin-inline: 38px; }
+  .qr-modal img { width: min(520px, 80svh, 88vw); }
+  .qr-actions { width: 100%; }
+  .qr-actions button { min-width: 0; flex: 1; }
+}

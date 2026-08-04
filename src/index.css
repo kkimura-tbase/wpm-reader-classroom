@@ -1,0 +1,7 @@
+@import "./globals.css";
+@import "./additions.css";
+
+:root {
+  --font-sans: Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
