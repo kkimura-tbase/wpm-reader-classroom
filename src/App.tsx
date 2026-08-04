@@ -101,6 +101,8 @@ export default function Home() {
   const canvasWrapRef = useRef<HTMLDivElement>(null);
   const drawingRef = useRef(false);
   const drawingPointerRef = useRef<number | null>(null);
+  const scrollPointerRef = useRef<number | null>(null);
+  const scrollLastYRef = useRef(0);
   const lastRef = useRef({ x: 0, y: 0 });
   const speechStartedRef = useRef(false);
   const speechSessionRef = useRef(0);
@@ -321,23 +323,41 @@ export default function Home() {
   }, [tab, resizeCanvas]);
 
   const canvasSnapshot = () => canvasRef.current?.toDataURL("image/png") || "";
-  const point = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const c = e.currentTarget, r = c.getBoundingClientRect();
-    return { x: (e.clientX-r.left) * c.width/r.width, y: (e.clientY-r.top) * c.height/r.height };
+  const canvasPoint = (canvas: HTMLCanvasElement, clientX: number, clientY: number) => {
+    const rect = canvas.getBoundingClientRect();
+    return { x: (clientX-rect.left) * canvas.width/rect.width, y: (clientY-rect.top) * canvas.height/rect.height };
   };
   const drawStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (inputMode === "stylus" && e.pointerType === "touch") return;
+    if (inputMode === "stylus" && e.pointerType === "touch") {
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      scrollPointerRef.current = e.pointerId;
+      scrollLastYRef.current = e.clientY;
+      return;
+    }
     e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId); drawingRef.current = true; drawingPointerRef.current = e.pointerId; lastRef.current = point(e);
+    e.currentTarget.setPointerCapture(e.pointerId); drawingRef.current = true; drawingPointerRef.current = e.pointerId; lastRef.current = canvasPoint(e.currentTarget, e.clientX, e.clientY);
     setUndoStack(s => [...s.slice(-19), canvasSnapshot()]); setRedoStack([]);
   };
   const drawMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (scrollPointerRef.current === e.pointerId) {
+      e.preventDefault();
+      window.scrollBy(0, scrollLastYRef.current - e.clientY);
+      scrollLastYRef.current = e.clientY;
+      return;
+    }
     if (!drawingRef.current || drawingPointerRef.current !== e.pointerId) return; e.preventDefault(); const c = e.currentTarget, ctx = c.getContext("2d"); if (!ctx) return;
-    const p = point(e); ctx.beginPath(); ctx.moveTo(lastRef.current.x, lastRef.current.y); ctx.lineTo(p.x,p.y);
-    ctx.lineCap="round"; ctx.lineJoin="round"; ctx.lineWidth=(eraser ? eraserSize : penSize)*(c.width/c.clientWidth);
-    ctx.globalCompositeOperation = eraser ? "destination-out" : "source-over"; ctx.strokeStyle=penColor; ctx.stroke(); lastRef.current=p;
+    const events = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
+    for (const event of events) {
+      const p = canvasPoint(c, event.clientX, event.clientY); ctx.beginPath(); ctx.moveTo(lastRef.current.x, lastRef.current.y); ctx.lineTo(p.x,p.y);
+      ctx.lineCap="round"; ctx.lineJoin="round"; ctx.lineWidth=(eraser ? eraserSize : penSize)*(c.width/c.clientWidth);
+      ctx.globalCompositeOperation = eraser ? "destination-out" : "source-over"; ctx.strokeStyle=penColor; ctx.stroke(); lastRef.current=p;
+    }
   };
-  const drawEnd = (e: React.PointerEvent<HTMLCanvasElement>) => { if (drawingPointerRef.current !== e.pointerId) return; drawingRef.current=false; drawingPointerRef.current=null; const shot=canvasSnapshot(); if (shot) localStorage.setItem("wpm-reader-drawing",shot); };
+  const drawEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (scrollPointerRef.current === e.pointerId) { scrollPointerRef.current=null; return; }
+    if (drawingPointerRef.current !== e.pointerId) return; drawingRef.current=false; drawingPointerRef.current=null; const shot=canvasSnapshot(); if (shot) localStorage.setItem("wpm-reader-drawing",shot);
+  };
   const undo = () => { const prev=undoStack.at(-1); if (!prev) return; setRedoStack(s=>[...s,canvasSnapshot()]); setUndoStack(s=>s.slice(0,-1)); restoreCanvas(prev); localStorage.setItem("wpm-reader-drawing",prev); };
   const redo = () => { const next=redoStack.at(-1); if (!next) return; setUndoStack(s=>[...s,canvasSnapshot()]); setRedoStack(s=>s.slice(0,-1)); restoreCanvas(next); localStorage.setItem("wpm-reader-drawing",next); };
   const clearCanvas = () => { const snap=canvasSnapshot(); if (snap) setUndoStack(s=>[...s,snap]); restoreCanvas(null); localStorage.removeItem("wpm-reader-drawing"); };
@@ -392,7 +412,7 @@ export default function Home() {
 
     {tab === "notes" && <section className="notes shell-wide">
       <div className="notes-head"><div><div className="eyebrow">QUICK REFLECTION</div><h1>Capture what<br/>stayed with you.</h1></div><p>It doesn’t have to be perfect.<br/>Start with the words, ideas, or images you remember.</p></div>
-      <div className="notes-grid"><div className="paper"><div className="toolrow"><div className="tools"><button className={!eraser?"on":""} onClick={()=>setEraser(false)}>✎ <span>ペン</span></button><button className={eraser?"on":""} onClick={()=>setEraser(true)}>▱ <span>消しゴム</span></button>{COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false)}} aria-label={`${color.label}のペン`}/>) }<label className="size">細<input type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label><div className="input-modes" role="group" aria-label="手書き入力方法"><span>入力</span><button className={inputMode==="stylus"?"on":""} onClick={()=>setInputMode("stylus")} aria-pressed={inputMode==="stylus"}>スタイラスのみ</button><button className={inputMode==="all"?"on":""} onClick={()=>setInputMode("all")} aria-pressed={inputMode==="all"}>指でも書く</button></div></div><div className="history"><button onClick={undo} disabled={!undoStack.length}>↶</button><button onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button></div></div><div className="canvas-wrap" ref={canvasWrapRef}><canvas className={inputMode==="all"?"finger-input":"stylus-input"} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} aria-label="手書きメモ用キャンバス"/><span>{inputMode==="stylus"?"STYLUS ONLY / 指はスクロール":"FINGER DRAWING / 指でも筆記"}</span></div></div></div>
+      <div className="notes-grid"><div className="paper"><div className="toolrow"><div className="tools"><button className={!eraser?"on":""} onClick={()=>setEraser(false)}>✎ <span>ペン</span></button><button className={eraser?"on":""} onClick={()=>setEraser(true)}>▱ <span>消しゴム</span></button>{COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false)}} aria-label={`${color.label}のペン`}/>) }<label className="size">細<input type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label><div className="input-modes" role="group" aria-label="手書き入力方法"><span>入力</span><button className={inputMode==="stylus"?"on":""} onClick={()=>setInputMode("stylus")} aria-pressed={inputMode==="stylus"}>Apple Pencil</button><button className={inputMode==="all"?"on":""} onClick={()=>setInputMode("all")} aria-pressed={inputMode==="all"}>指＋Pencil</button></div></div><div className="history"><button onClick={undo} disabled={!undoStack.length}>↶</button><button onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button></div></div><div className="canvas-wrap" ref={canvasWrapRef}><canvas className={inputMode==="all"?"finger-input":"stylus-input"} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} onLostPointerCapture={drawEnd} aria-label="手書きメモ用キャンバス"/><span>{inputMode==="stylus"?"APPLE PENCIL / 指はスクロール":"FINGER + PENCIL / 指でも筆記"}</span></div></div></div>
     </section>}
     {qrOpen && <div className="qr-backdrop" onClick={()=>setQrOpen(false)}><section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" onClick={e=>e.stopPropagation()}><button className="qr-close" onClick={()=>setQrOpen(false)} aria-label="QRコードを閉じる">×</button><div className="eyebrow">SHARE WITH CLASS</div><h2 id="qr-title">{teacherTitle || "Reading lesson"}</h2><p>生徒はカメラでQRコードを読み取ってください。</p>{qrDataUrl?<img src={qrDataUrl} alt={`${teacherTitle || "教材"}の共有QRコード`}/>:<div className="qr-error">{qrError || "QRコードを作成できませんでした。"}</div>}<div className="qr-actions"><button onClick={copyExistingLink}>リンクをコピー</button><button className="primary" onClick={saveQrImage} disabled={!qrDataUrl}>QR画像を保存 ↓</button></div></section></div>}
   </main>;

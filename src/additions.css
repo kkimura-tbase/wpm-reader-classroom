@@ -404,12 +404,12 @@
   color: #3157d5;
 }
 
-.canvas-wrap canvas.stylus-input {
-  touch-action: pan-x pan-y;
-}
-
+.canvas-wrap canvas.stylus-input,
 .canvas-wrap canvas.finger-input {
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .history .save-note {
