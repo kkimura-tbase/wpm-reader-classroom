@@ -105,9 +105,8 @@ export default function Home() {
   const drawingPointerRef = useRef<number | null>(null);
   const scrollPointerRef = useRef<number | null>(null);
   const scrollLastYRef = useRef(0);
+  const stylusTouchRef = useRef<number | null>(null);
   const lastRef = useRef<CanvasPoint>({ x: 0, y: 0 });
-  const pendingPointsRef = useRef<CanvasPoint[]>([]);
-  const drawFrameRef = useRef<number | null>(null);
   const drawingStyleRef = useRef<{ eraser: boolean; size: number; color: string }>({ eraser: false, size: 4, color: COLORS[0].value });
   const canvasSaveGenerationRef = useRef(0);
   const committedSnapshotRef = useRef<CanvasSnapshot>(Promise.resolve(""));
@@ -335,8 +334,6 @@ export default function Home() {
     window.addEventListener("resize", resizeCanvas);
     return () => {
       cancelAnimationFrame(id);
-      if (drawFrameRef.current !== null) cancelAnimationFrame(drawFrameRef.current);
-      drawFrameRef.current = null;
       window.removeEventListener("resize", resizeCanvas);
     };
   }, [tab, resizeCanvas]);
@@ -364,16 +361,22 @@ export default function Home() {
     const rect = canvas.getBoundingClientRect();
     return { x: (clientX-rect.left) * canvas.width/rect.width, y: (clientY-rect.top) * canvas.height/rect.height };
   };
-  const flushPendingPoints = () => {
-    const canvas = canvasRef.current, points = pendingPointsRef.current.splice(0);
-    if (!canvas || !points.length) return;
+  const drawCanvasPoints = (canvas: HTMLCanvasElement, points: CanvasPoint[]) => {
+    const drawablePoints: CanvasPoint[] = [];
+    let previous = lastRef.current;
+    for (const point of points) {
+      if (Math.hypot(point.x-previous.x, point.y-previous.y) <= 0.05) continue;
+      drawablePoints.push(point);
+      previous = point;
+    }
+    if (!drawablePoints.length) return;
     const ctx = canvas.getContext("2d"); if (!ctx) return;
     const style = drawingStyleRef.current;
     ctx.beginPath(); ctx.moveTo(lastRef.current.x, lastRef.current.y);
-    for (const point of points) ctx.lineTo(point.x, point.y);
+    for (const point of drawablePoints) ctx.lineTo(point.x, point.y);
     ctx.lineCap="round"; ctx.lineJoin="round"; ctx.lineWidth=style.size*(canvas.width/canvas.clientWidth);
     ctx.globalCompositeOperation = style.eraser ? "destination-out" : "source-over"; ctx.strokeStyle=style.color; ctx.stroke();
-    lastRef.current=points.at(-1)!;
+    lastRef.current=drawablePoints.at(-1)!;
   };
   const drawContactPoint = (canvas: HTMLCanvasElement, point: CanvasPoint) => {
     const ctx = canvas.getContext("2d"); if (!ctx) return;
@@ -389,25 +392,36 @@ export default function Home() {
     try { if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId); }
     catch { /* The browser may have already released this pointer. */ }
   };
-  const beginDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = e.currentTarget;
-    e.preventDefault();
+  const beginDrawingAt = (canvas: HTMLCanvasElement, pointerId: number, clientX: number, clientY: number, capturePointer = false) => {
     if (scrollPointerRef.current !== null) {
       const scrollingPointer = scrollPointerRef.current;
       scrollPointerRef.current = null;
       releaseCapturedPointer(canvas, scrollingPointer);
     }
     const beforeStroke = committedSnapshotRef.current;
-    try { canvas.setPointerCapture(e.pointerId); }
-    catch { /* Implicit capture or normal hit testing can continue the stroke. */ }
-    drawingRef.current = true; drawingPointerRef.current = e.pointerId; lastRef.current = canvasPoint(canvas, e.clientX, e.clientY);
+    if (capturePointer) {
+      try { canvas.setPointerCapture(pointerId); }
+      catch { /* Implicit capture or normal hit testing can continue the stroke. */ }
+    }
+    drawingRef.current = true; drawingPointerRef.current = pointerId; lastRef.current = canvasPoint(canvas, clientX, clientY);
     drawingStyleRef.current = { eraser, size: eraser ? eraserSize : penSize, color: penColor };
-    pendingPointsRef.current=[];
     drawContactPoint(canvas, lastRef.current);
     setUndoStack(s => [...s.slice(-19), beforeStroke]); setRedoStack([]);
   };
+  const beginDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    beginDrawingAt(e.currentTarget, e.pointerId, e.clientX, e.clientY, true);
+  };
+  const finishDrawing = (canvas: HTMLCanvasElement, pointerId: number, endPoint?: CanvasPoint) => {
+    if (drawingPointerRef.current !== pointerId) return;
+    if (endPoint) drawCanvasPoints(canvas, [endPoint]);
+    drawingRef.current=false; drawingPointerRef.current=null;
+    committedSnapshotRef.current=persistCanvas(); requestAnimationFrame(resizeCanvas);
+  };
   const drawStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (inputMode === "stylus" && e.pointerType === "touch") {
+    const looksLikePen = e.pointerType === "pen" || (!e.pointerType && e.pressure > 0);
+    if (stylusTouchRef.current !== null && looksLikePen) return;
+    if (inputMode === "stylus" && e.pointerType === "touch" && !looksLikePen) {
       if (drawingPointerRef.current !== null || scrollPointerRef.current !== null) return;
       e.preventDefault();
       try { e.currentTarget.setPointerCapture(e.pointerId); }
@@ -420,6 +434,8 @@ export default function Home() {
     beginDrawing(e);
   };
   const drawMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const looksLikePen = e.pointerType === "pen" || (!e.pointerType && e.pressure > 0);
+    if (stylusTouchRef.current !== null && looksLikePen) { e.preventDefault(); return; }
     let recoveredFromMove = false;
     if (scrollPointerRef.current === e.pointerId) {
       e.preventDefault();
@@ -437,26 +453,57 @@ export default function Home() {
     const coalescedEvents = e.nativeEvent.getCoalescedEvents?.();
     const events = coalescedEvents?.length ? coalescedEvents : [e.nativeEvent];
     if (recoveredFromMove && events.length) lastRef.current=canvasPoint(canvas, events[0].clientX, events[0].clientY);
-    for (const event of events.slice(recoveredFromMove ? 1 : 0)) pendingPointsRef.current.push(canvasPoint(canvas, event.clientX, event.clientY));
-    if (drawFrameRef.current === null) {
-      drawFrameRef.current=requestAnimationFrame(() => {
-        drawFrameRef.current=null;
-        flushPendingPoints();
-      });
-    }
+    drawCanvasPoints(canvas, events.slice(recoveredFromMove ? 1 : 0).map(event => canvasPoint(canvas, event.clientX, event.clientY)));
   };
   const drawEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (scrollPointerRef.current === e.pointerId) { scrollPointerRef.current=null; return; }
     if (drawingPointerRef.current !== e.pointerId) return;
+    if (stylusTouchRef.current !== null && e.pointerType === "pen") { e.preventDefault(); return; }
     e.preventDefault();
-    if (e.type === "pointerup") {
-      const endPoint = canvasPoint(e.currentTarget, e.clientX, e.clientY);
-      const distance = Math.hypot(endPoint.x-lastRef.current.x, endPoint.y-lastRef.current.y);
-      if (distance > 0.25) pendingPointsRef.current.push(endPoint);
-    }
-    if (drawFrameRef.current !== null) cancelAnimationFrame(drawFrameRef.current);
-    drawFrameRef.current=null; flushPendingPoints(); drawingRef.current=false; drawingPointerRef.current=null; committedSnapshotRef.current=persistCanvas(); requestAnimationFrame(resizeCanvas);
+    finishDrawing(e.currentTarget, e.pointerId, e.type === "pointerup" ? canvasPoint(e.currentTarget, e.clientX, e.clientY) : undefined);
   };
+  useEffect(() => {
+    if (tab !== "notes") return;
+    const canvas = canvasRef.current; if (!canvas) return;
+    const isApplePencilTouch = (touch: Touch) => {
+      const touchType = (touch as Touch & { touchType?: string }).touchType;
+      return touchType === "stylus" || touchType === "pencil" || touch.force > 0;
+    };
+    const touchPointerId = (identifier: number) => -(identifier+1);
+    const findActiveTouch = (touches: TouchList) => Array.from(touches).find(touch => touch.identifier === stylusTouchRef.current);
+    const handleStylusTouchStart = (event: TouchEvent) => {
+      const touch = Array.from(event.changedTouches).find(isApplePencilTouch); if (!touch) return;
+      event.preventDefault();
+      stylusTouchRef.current=touch.identifier;
+      if (drawingPointerRef.current === null) beginDrawingAt(canvas, touchPointerId(touch.identifier), touch.clientX, touch.clientY);
+    };
+    const handleStylusTouchMove = (event: TouchEvent) => {
+      if (stylusTouchRef.current === null) return;
+      const touch = findActiveTouch(event.touches) ?? findActiveTouch(event.changedTouches); if (!touch) return;
+      event.preventDefault();
+      if (drawingPointerRef.current === null) beginDrawingAt(canvas, touchPointerId(touch.identifier), touch.clientX, touch.clientY);
+      drawCanvasPoints(canvas, [canvasPoint(canvas, touch.clientX, touch.clientY)]);
+    };
+    const handleStylusTouchEnd = (event: TouchEvent) => {
+      if (stylusTouchRef.current === null) return;
+      const touch = findActiveTouch(event.changedTouches); if (!touch) return;
+      event.preventDefault();
+      const pointerId = drawingPointerRef.current;
+      if (pointerId !== null) finishDrawing(canvas, pointerId, event.type === "touchend" ? canvasPoint(canvas, touch.clientX, touch.clientY) : undefined);
+      stylusTouchRef.current=null;
+    };
+    canvas.addEventListener("touchstart", handleStylusTouchStart, { passive: false });
+    canvas.addEventListener("touchmove", handleStylusTouchMove, { passive: false });
+    canvas.addEventListener("touchend", handleStylusTouchEnd, { passive: false });
+    canvas.addEventListener("touchcancel", handleStylusTouchEnd, { passive: false });
+    return () => {
+      canvas.removeEventListener("touchstart", handleStylusTouchStart);
+      canvas.removeEventListener("touchmove", handleStylusTouchMove);
+      canvas.removeEventListener("touchend", handleStylusTouchEnd);
+      canvas.removeEventListener("touchcancel", handleStylusTouchEnd);
+      stylusTouchRef.current=null;
+    };
+  }, [tab, inputMode, eraser, eraserSize, penSize, penColor]);
   const undo = async () => {
     const prev=undoStack.at(-1); if (!prev || historyBusyRef.current) return;
     historyBusyRef.current=true;
