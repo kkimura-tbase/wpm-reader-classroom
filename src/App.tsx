@@ -375,6 +375,16 @@ export default function Home() {
     ctx.globalCompositeOperation = style.eraser ? "destination-out" : "source-over"; ctx.strokeStyle=style.color; ctx.stroke();
     lastRef.current=points.at(-1)!;
   };
+  const drawContactPoint = (canvas: HTMLCanvasElement, point: CanvasPoint) => {
+    const ctx = canvas.getContext("2d"); if (!ctx) return;
+    const style = drawingStyleRef.current;
+    const radius = Math.max(1, style.size*(canvas.width/canvas.clientWidth)/2);
+    ctx.save();
+    ctx.globalCompositeOperation = style.eraser ? "destination-out" : "source-over";
+    ctx.fillStyle = style.color;
+    ctx.beginPath(); ctx.arc(point.x, point.y, radius, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  };
   const releaseCapturedPointer = (canvas: HTMLCanvasElement, pointerId: number) => {
     try { if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId); }
     catch { /* The browser may have already released this pointer. */ }
@@ -393,6 +403,7 @@ export default function Home() {
     drawingRef.current = true; drawingPointerRef.current = e.pointerId; lastRef.current = canvasPoint(canvas, e.clientX, e.clientY);
     drawingStyleRef.current = { eraser, size: eraser ? eraserSize : penSize, color: penColor };
     pendingPointsRef.current=[];
+    drawContactPoint(canvas, lastRef.current);
     setUndoStack(s => [...s.slice(-19), beforeStroke]); setRedoStack([]);
   };
   const drawStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -437,6 +448,12 @@ export default function Home() {
   const drawEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (scrollPointerRef.current === e.pointerId) { scrollPointerRef.current=null; return; }
     if (drawingPointerRef.current !== e.pointerId) return;
+    e.preventDefault();
+    if (e.type === "pointerup") {
+      const endPoint = canvasPoint(e.currentTarget, e.clientX, e.clientY);
+      const distance = Math.hypot(endPoint.x-lastRef.current.x, endPoint.y-lastRef.current.y);
+      if (distance > 0.25) pendingPointsRef.current.push(endPoint);
+    }
     if (drawFrameRef.current !== null) cancelAnimationFrame(drawFrameRef.current);
     drawFrameRef.current=null; flushPendingPoints(); drawingRef.current=false; drawingPointerRef.current=null; committedSnapshotRef.current=persistCanvas(); requestAnimationFrame(resizeCanvas);
   };
