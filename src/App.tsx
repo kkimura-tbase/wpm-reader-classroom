@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
+import { canDrawPointer, isStylusTouch } from "./canvasInput";
 
 const SAMPLE = `A small change in the way we read can make a big difference. When readers try to understand every single word, they often lose the main idea. Skilled readers move forward at a steady pace. They notice key words, connect ideas, and adjust their speed when the text becomes difficult.\n\nReading faster does not mean rushing. It means using your attention wisely. Start with a comfortable goal, follow the highlighted words, and keep moving. After reading, pause and write the most important idea in your own words. This short reflection helps turn speed into real understanding.`;
 const WPM_PRESETS = [80, 100, 120, 140, 160, 200, 250, 300];
@@ -79,8 +80,9 @@ const formatTime = (seconds: number) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-export default function Home() {
-  const [tab, setTab] = useState<Tab>("setup");
+export default function Home({ notesOnly = false }: { notesOnly?: boolean }) {
+  const drawingKey = notesOnly ? "wpm-free-drawing" : "wpm-reader-drawing";
+  const [tab, setTab] = useState<Tab>(notesOnly ? "notes" : "setup");
   const [text, setText] = useState(SAMPLE);
   const [wpm, setWpm] = useState(160);
   const [index, setIndex] = useState(0);
@@ -155,14 +157,14 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("wpm-reader-v1") || "{}");
+      const saved = notesOnly ? {} : JSON.parse(localStorage.getItem("wpm-reader-v1") || "{}");
       if (typeof saved.text === "string") setText(saved.text);
       if (typeof saved.wpm === "number") setWpm(saved.wpm);
       if (typeof saved.voiceURI === "string") setVoiceURI(saved.voiceURI);
       if (typeof saved.speechRate === "number") setSpeechRate(saved.speechRate);
       if (saved.inputMode === "stylus" || saved.inputMode === "all") setInputMode(saved.inputMode);
     } catch { /* use defaults */ }
-    const token = window.location.hash.match(/^#lesson=(.+)$/)?.[1];
+    const token = !notesOnly && window.location.hash.match(/^#lesson=(.+)$/)?.[1];
     if (token) {
       decodeLesson(token).then(lesson => {
         const lessonWords = lesson.text.trim().split(/\s+/).filter(Boolean).length;
@@ -176,7 +178,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || notesOnly) return;
     localStorage.setItem("wpm-reader-v1", JSON.stringify({ text, wpm, voiceURI, speechRate, inputMode }));
   }, [text, wpm, voiceURI, speechRate, inputMode, hydrated]);
 
@@ -209,6 +211,8 @@ export default function Home() {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     speechStartedRef.current = false;
   }, []);
+
+  useEffect(() => () => { playingRef.current = false; stopSpeech(); }, [stopSpeech]);
 
   const speakFrom = useCallback((from: number) => {
     if (!speechOn || !speechSupported || !words.length || !voices.length) return;
@@ -329,12 +333,16 @@ export default function Home() {
     const ctx = canvas.getContext("2d"); if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!data) return;
-    const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height); img.src = data;
+    const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, img.height * canvas.width / img.width); img.src = data;
   }, []);
   const layoutCanvasAtZoom = useCallback((zoom: number) => {
-    const canvas = canvasRef.current, stage = canvasStageRef.current;
+    const canvas = canvasRef.current, stage = canvasStageRef.current, wrap = canvasWrapRef.current;
     const { width, height } = canvasBaseSizeRef.current;
-    if (!canvas || !stage || !width || !height) return;
+    if (!canvas || !stage || !wrap || !width || !height) return;
+    // Reserve the vertical scrollbar consistently. Paper length is independent
+    // of the viewport, so even at 100% there is room to scroll and keep writing.
+    wrap.style.overflowY = "scroll";
+    wrap.style.overflowX = zoom > 1 ? "auto" : "hidden";
     const displayWidth = Math.round(width * zoom * 100) / 100;
     const displayHeight = Math.round(height * zoom * 100) / 100;
     canvas.style.width = `${displayWidth}px`; canvas.style.height = `${displayHeight}px`;
@@ -362,13 +370,16 @@ export default function Home() {
   const resizeCanvas = useCallback(() => {
     const canvas = canvasRef.current, wrap = canvasWrapRef.current; if (!canvas || !wrap) return;
     if (drawingRef.current) return;
-    const width = Math.round(wrap.clientWidth), height = Math.round(wrap.clientHeight);
+    const rect = wrap.getBoundingClientRect();
+    const width = Math.max(0, Math.floor(rect.width - (wrap.offsetWidth - wrap.clientWidth)));
+    // A fixed paper aspect ratio preserves strokes when the panel width changes.
+    const height = width * 6;
     canvasBaseSizeRef.current = { width, height };
     layoutCanvasAtZoom(canvasZoomRef.current);
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     const pixelWidth = Math.round(width * ratio), pixelHeight = Math.round(height * ratio);
     if (!width || !height || (canvas.dataset.ready === "true" && canvas.width === pixelWidth && canvas.height === pixelHeight)) return;
-    const old = canvas.dataset.ready === "true" ? canvas.toDataURL() : localStorage.getItem("wpm-reader-drawing");
+    const old = canvas.dataset.ready === "true" ? canvas.toDataURL() : localStorage.getItem(drawingKey);
     canvas.width = pixelWidth; canvas.height = pixelHeight;
     canvas.dataset.ready = "true";
     committedSnapshotRef.current = Promise.resolve(old || "");
@@ -402,7 +413,7 @@ export default function Home() {
     const generation = ++canvasSaveGenerationRef.current;
     const snapshot = canvasSnapshot();
     void snapshot.then(shot => {
-      if (generation === canvasSaveGenerationRef.current && shot && !drawingRef.current) localStorage.setItem("wpm-reader-drawing", shot);
+      if (generation === canvasSaveGenerationRef.current && shot && !drawingRef.current) localStorage.setItem(drawingKey, shot);
     });
     return snapshot;
   };
@@ -486,19 +497,20 @@ export default function Home() {
   };
   const drawStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (pinchRef.current) { e.preventDefault(); return; }
-    const looksLikePen = e.pointerType === "pen" || (!e.pointerType && e.pressure > 0);
+    const looksLikePen = e.pointerType === "pen";
     if (stylusTouchRef.current !== null && looksLikePen) return;
-    if (panMode || (inputMode === "stylus" && e.pointerType === "touch" && !looksLikePen)) {
+    if (panMode || (inputMode === "stylus" && e.pointerType === "touch")) {
       e.preventDefault();
       beginPanningAt(e.currentTarget, e.pointerId, e.clientX, e.clientY, true);
       return;
     }
     if (drawingPointerRef.current !== null) return;
+    if (!canDrawPointer(inputMode, e.pointerType)) return;
     beginDrawing(e);
   };
   const drawMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (pinchRef.current) { e.preventDefault(); return; }
-    const looksLikePen = e.pointerType === "pen" || (!e.pointerType && e.pressure > 0);
+    const looksLikePen = e.pointerType === "pen";
     if (stylusTouchRef.current !== null && looksLikePen) { e.preventDefault(); return; }
     let recoveredFromMove = false;
     if (scrollPointerRef.current === e.pointerId) {
@@ -507,7 +519,7 @@ export default function Home() {
       return;
     }
     if (!drawingRef.current || drawingPointerRef.current !== e.pointerId) {
-      const pointerCanDraw = !panMode && (inputMode === "all" || e.pointerType !== "touch");
+      const pointerCanDraw = !panMode && canDrawPointer(inputMode, e.pointerType);
       const pointerIsInContact = e.buttons !== 0 || e.pressure > 0;
       if (drawingPointerRef.current === null && pointerCanDraw && pointerIsInContact) { beginDrawing(e); recoveredFromMove = true; }
       else return;
@@ -529,10 +541,7 @@ export default function Home() {
     if (tab !== "notes") return;
     const canvas = canvasRef.current; if (!canvas) return;
     const wrap = canvasWrapRef.current; if (!wrap) return;
-    const isApplePencilTouch = (touch: Touch) => {
-      const touchType = (touch as Touch & { touchType?: string }).touchType;
-      return touchType === "stylus" || touchType === "pencil" || touch.force > 0;
-    };
+    const isApplePencilTouch = (touch: Touch) => isStylusTouch(touch as Touch & { touchType?: string });
     const fingerTouches = (touches: TouchList) => Array.from(touches).filter(touch => !isApplePencilTouch(touch));
     const touchDistance = (first: Touch, second: Touch) => Math.hypot(second.clientX-first.clientX, second.clientY-first.clientY);
     const touchCenter = (first: Touch, second: Touch) => ({ x:(first.clientX+second.clientX)/2, y:(first.clientY+second.clientY)/2 });
@@ -621,19 +630,19 @@ export default function Home() {
     const prev=undoStack.at(-1); if (!prev || historyBusyRef.current) return;
     historyBusyRef.current=true;
     const current=committedSnapshotRef.current; setRedoStack(s=>[...s.slice(-19),current]); setUndoStack(s=>s.slice(0,-1));
-    try { const data=await prev; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem("wpm-reader-drawing",data); else localStorage.removeItem("wpm-reader-drawing"); }
+    try { const data=await prev; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem(drawingKey,data); else localStorage.removeItem(drawingKey); }
     finally { historyBusyRef.current=false; }
   };
   const redo = async () => {
     const next=redoStack.at(-1); if (!next || historyBusyRef.current) return;
     historyBusyRef.current=true;
     const current=committedSnapshotRef.current; setUndoStack(s=>[...s.slice(-19),current]); setRedoStack(s=>s.slice(0,-1));
-    try { const data=await next; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem("wpm-reader-drawing",data); else localStorage.removeItem("wpm-reader-drawing"); }
+    try { const data=await next; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem(drawingKey,data); else localStorage.removeItem(drawingKey); }
     finally { historyBusyRef.current=false; }
   };
   const clearCanvas = () => {
     const snap=committedSnapshotRef.current; setUndoStack(s=>[...s.slice(-19),snap]); setRedoStack([]);
-    canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restoreCanvas(null); localStorage.removeItem("wpm-reader-drawing");
+    canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restoreCanvas(null); localStorage.removeItem(drawingKey);
   };
   const saveImage = () => {
     const canvas = canvasRef.current; if (!canvas) return;
@@ -644,9 +653,9 @@ export default function Home() {
     ctx.drawImage(canvas, 0, 0);
     const anchor = document.createElement("a"); anchor.href=exportCanvas.toDataURL("image/png"); anchor.download="reading-note.png"; anchor.click();
   };
-  const resetAll = () => { if (!confirm("教材・設定・メモをすべてリセットしますか？")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem("wpm-reader-drawing"); history.replaceState(null,"",`${location.pathname}${location.search}`); setText(SAMPLE); setWpm(160); setSharedLesson(null); setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
+  const resetAll = () => { if (!confirm("教材・設定・メモをすべてリセットしますか？")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem(drawingKey); history.replaceState(null,"",`${location.pathname}${location.search}`); setText(SAMPLE); setWpm(160); setSharedLesson(null); setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
 
-  return <main>
+  return <main className={notesOnly ? "embedded-notes" : undefined}>
     <header className="topbar">
       <button className="brand" onClick={() => setTab("setup")} aria-label="ホームへ"><span>W</span><div><strong>WPM Reader</strong></div></button>
       <nav aria-label="画面切り替え">
@@ -701,7 +710,7 @@ export default function Home() {
             <button onClick={undo} disabled={!undoStack.length}>↶</button><button onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button>
           </div>
         </div>
-        <div className="canvas-wrap" ref={canvasWrapRef}>
+        <div className="canvas-wrap" ref={canvasWrapRef} style={{ overflowY: "scroll", overflowX: canvasZoom > 1 ? "auto" : "hidden" }}>
           <div className="canvas-stage" ref={canvasStageRef}><canvas className={`${inputMode==="all"?"finger-input":"stylus-input"} ${panMode?"pan-input":""}`} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} aria-label="手書きメモ用キャンバス"/></div>
           <span>{panMode?"MOVE / ドラッグで移動":inputMode==="stylus"?"PEN / MOUSE / 指で移動・2本指で拡大":"TOUCH / PEN / MOUSE / 拡大は上のボタン"}</span>
         </div>
