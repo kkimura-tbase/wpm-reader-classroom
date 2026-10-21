@@ -4,7 +4,7 @@ import FreeReader from "./FreeReader";
 import "./free-reader.css";
 
 export default function ReaderRoot() {
-  const [mode, setMode] = useState<"pace" | "free">("pace");
+  const [mode, setMode] = useState<"pace" | "free">(() => location.hash.startsWith("#free=") ? "free" : "pace");
   const [busy, setBusy] = useState(false);
   return <>
     <div className="mode-bar" role="group" aria-label="読解モード">
