@@ -7,7 +7,7 @@ export const SHARE_PREFIX = "free=";
 export const MAX_SHARE_URL_LENGTH = 2000;
 const MAX_PAYLOAD_LENGTH = 100_000;
 const MAX_INFLATED_BYTES = 200_000;
-export const TOO_LONG_MESSAGE = "教材が長いためQRにできません。JSONファイルで配布してください。";
+export const TOO_LONG_MESSAGE = "教材が長いためQRにできません。「公開URLで共有」を使うと短いURLとQRで配布できます（書き出したJSONを public/lessons/ に置いて push し、ファイル名を入力）。";
 const BAD_LINK_MESSAGE = "共有リンクを読み込めませんでした。リンクが壊れているか、正しい教材ではありません。";
 
 async function pump(input: Uint8Array, stream: CompressionStream | DecompressionStream, maxBytes = Infinity) {
