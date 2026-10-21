@@ -1,6 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Home from "./App";
+import QRCode from "qrcode";
 import { allowance, downloadJson, lookupKey, measuredWpm, tokenize, validateLesson } from "./lesson";
+import { createShareUrl, decodeLesson, payloadFromHash } from "./share";
 import type { Gloss, ReadingLesson, ReadingRecord } from "./lesson";
 const NotesBoard = memo(Home);
 
@@ -32,6 +34,9 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
   const [saveError, setSaveError] = useState("");
   const [ratio, setRatio] = useState(60);
   const [popup, setPopup] = useState({ top: 80, left: 20, maxHeight: 320 });
+  const [shareUrl, setShareUrl] = useState("");
+  const [qrUrl, setQrUrl] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
   const startRef = useRef<number | null>(null);
   const words = useMemo(() => tokenize(lesson.text), [lesson.text]);
   const glosses = useMemo(() => new Map(lesson.glosses.map(g => [g.index, g])), [lesson.glosses]);
@@ -46,6 +51,32 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
     catch { setSaveError("端末に保存できませんでした。必要な教材・履歴はファイルで保存してください。"); }
   }
   useEffect(() => { save("wpm-free-lesson", lesson); }, [lesson]);
+  useEffect(() => { setShareUrl(""); setQrUrl(""); setShareMessage(""); }, [lesson]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      const payload = payloadFromHash(location.hash);
+      if (payload === null) return;
+      history.replaceState(null, "", `${location.pathname}${location.search}`);
+      decodeLesson(payload).then(next => {
+        if (cancelled) return;
+        setLesson(next); resetReading(); setTeacher(false); setMessage("共有された教材を読み込みました。");
+      }).catch(e => { if (!cancelled) setMessage(e instanceof Error ? e.message : "共有リンクを読み込めませんでした。"); });
+    };
+    load();
+    window.addEventListener("hashchange", load);
+    return () => { cancelled = true; window.removeEventListener("hashchange", load); };
+  }, []);
+  async function makeShare() {
+    setShareMessage(""); setShareUrl(""); setQrUrl("");
+    try {
+      const url = await createShareUrl(lesson, location.href);
+      setShareUrl(url);
+      setQrUrl(await QRCode.toDataURL(url, { errorCorrectionLevel: "L", width: 480, margin: 3, color: { dark: "#16212b", light: "#ffffff" } }));
+      try { await navigator.clipboard.writeText(url); setShareMessage("共有URLをコピーし、QRコードを表示しました。"); }
+      catch { setShareMessage("共有URLを作成しました。下の欄からコピーしてください。"); }
+    } catch (e) { setShareMessage(e instanceof Error ? e.message : "共有URLを作成できませんでした。"); }
+  }
   useEffect(() => {
     onBusy(phase === "reading");
     return () => onBusy(false);
@@ -148,8 +179,14 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
           <label className="fr-file">教材をインポート<input type="file" accept=".json,application/json" onChange={e => { void importFile(e.target.files?.[0]); e.target.value = ""; }} /></label>
           <button onClick={() => replaceLesson(SAMPLE)}>サンプル教材</button>
           <button onClick={() => downloadJson(lesson, "reading-lesson.json")}>教材を書き出す</button>
+          <button onClick={() => void makeShare()}>URL・QRで配布</button>
           <button onClick={() => { setTeacher(!teacher); setSelected(null); }} aria-pressed={teacher}>教師用プレビュー・修正</button>
         </div>
+        {shareMessage && <p className="fr-message" role="status">{shareMessage}</p>}
+        {shareUrl && <div className="fr-share">
+          <input readOnly aria-label="共有URL" value={shareUrl} onFocus={e => e.target.select()} />
+          {qrUrl && <img src={qrUrl} width={240} height={240} alt="教材共有用のQRコード" />}
+        </div>}
         <label>教材名<input maxLength={80} value={lesson.title} onChange={e => setLesson({ ...lesson, title: e.target.value })} /></label>
         <details><summary>本文を貼り付ける（解説なし）</summary>
           <p>解説付き教材の本文を変更すると、位置のずれを防ぐため解説をすべて解除します。</p>
