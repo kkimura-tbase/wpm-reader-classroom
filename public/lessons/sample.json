@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "title": "Small steps — 解説付きサンプル",
+  "text": "I have a notebook. I have written three ideas in it.\n\nSmall steps can make a big difference.",
+  "glosses": [
+    {
+      "index": 0,
+      "word": "I",
+      "lemma": "I",
+      "pos": "代名詞",
+      "meaning": "私は"
+    },
+    {
+      "index": 1,
+      "word": "have",
+      "lemma": "have",
+      "pos": "動詞",
+      "meaning": "持っている"
+    },
+    {
+      "index": 2,
+      "word": "a",
+      "lemma": "a",
+      "pos": "冠詞",
+      "meaning": "一つの"
+    },
+    {
+      "index": 3,
+      "word": "notebook",
+      "lemma": "notebook",
+      "pos": "名詞",
+      "meaning": "ノート"
+    },
+    {
+      "index": 4,
+      "word": "I",
+      "lemma": "I",
+      "pos": "代名詞",
+      "meaning": "私は"
+    },
+    {
+      "index": 5,
+      "word": "have",
+      "lemma": "have",
+      "pos": "助動詞",
+      "meaning": "現在完了を作る",
+      "note": "have + 過去分詞。ここでは「書き終えて、今その内容がある」という完了・結果を表す。",
+      "end": 7
+    },
+    {
+      "index": 6,
+      "word": "written",
+      "lemma": "write",
+      "pos": "動詞（過去分詞）",
+      "meaning": "書いた",
+      "note": "have writtenで「書き終えた」。"
+    },
+    {
+      "index": 7,
+      "word": "three",
+      "lemma": "three",
+      "pos": "数詞",
+      "meaning": "三つの"
+    },
+    {
+      "index": 8,
+      "word": "ideas",
+      "lemma": "idea",
+      "pos": "名詞",
+      "meaning": "考え、アイデア"
+    },
+    {
+      "index": 9,
+      "word": "in",
+      "lemma": "in",
+      "pos": "前置詞",
+      "meaning": "〜の中に"
+    },
+    {
+      "index": 10,
+      "word": "it",
+      "lemma": "it",
+      "pos": "代名詞",
+      "meaning": "それ（ノート）"
+    },
+    {
+      "index": 11,
+      "word": "Small",
+      "lemma": "small",
+      "pos": "形容詞",
+      "meaning": "小さな"
+    },
+    {
+      "index": 12,
+      "word": "steps",
+      "lemma": "step",
+      "pos": "名詞",
+      "meaning": "一歩一歩の行動"
+    },
+    {
+      "index": 13,
+      "word": "can",
+      "lemma": "can",
+      "pos": "助動詞",
+      "meaning": "〜することがある"
+    },
+    {
+      "index": 14,
+      "word": "make",
+      "lemma": "make",
+      "pos": "動詞",
+      "meaning": "生み出す",
+      "note": "make a differenceで「変化をもたらす」。",
+      "end": 18
+    },
+    {
+      "index": 15,
+      "word": "a",
+      "lemma": "a",
+      "pos": "冠詞",
+      "meaning": "一つの"
+    },
+    {
+      "index": 16,
+      "word": "big",
+      "lemma": "big",
+      "pos": "形容詞",
+      "meaning": "大きな"
+    },
+    {
+      "index": 17,
+      "word": "difference",
+      "lemma": "difference",
+      "pos": "名詞",
+      "meaning": "違い、変化"
+    }
+  ]
+}

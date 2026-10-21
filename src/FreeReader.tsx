@@ -3,6 +3,7 @@ import Home from "./App";
 import QRCode from "qrcode";
 import { allowance, downloadJson, lookupKey, measuredWpm, tokenize, validateLesson } from "./lesson";
 import { createShareUrl, decodeLesson, payloadFromHash } from "./share";
+import { createSrcShareUrl, fetchLesson, srcFromSearch, SRC_PARAM } from "./sharesrc";
 import type { Gloss, ReadingLesson, ReadingRecord } from "./lesson";
 const NotesBoard = memo(Home);
 
@@ -37,6 +38,10 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
   const [shareUrl, setShareUrl] = useState("");
   const [qrUrl, setQrUrl] = useState("");
   const [shareMessage, setShareMessage] = useState("");
+  const [pubName, setPubName] = useState("");
+  const [pubUrl, setPubUrl] = useState("");
+  const [pubQr, setPubQr] = useState("");
+  const [pubMessage, setPubMessage] = useState("");
   const startRef = useRef<number | null>(null);
   const words = useMemo(() => tokenize(lesson.text), [lesson.text]);
   const glosses = useMemo(() => new Map(lesson.glosses.map(g => [g.index, g])), [lesson.glosses]);
@@ -66,6 +71,30 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
     load();
     window.addEventListener("hashchange", load);
     return () => { cancelled = true; window.removeEventListener("hashchange", load); };
+  }, []);
+  async function makePublicShare() {
+    setPubMessage(""); setPubUrl(""); setPubQr("");
+    try {
+      const url = createSrcShareUrl(pubName, location.href);
+      setPubUrl(url);
+      setPubQr(await QRCode.toDataURL(url, { errorCorrectionLevel: "L", width: 480, margin: 3, color: { dark: "#16212b", light: "#ffffff" } }));
+      try { await navigator.clipboard.writeText(url); setPubMessage("共有URLをコピーし、QRコードを表示しました。ファイルを公開（push・デプロイ）済みか確認してください。"); }
+      catch { setPubMessage("共有URLを作成しました。下の欄からコピーしてください。"); }
+    } catch (e) { setPubMessage(e instanceof Error ? e.message : "共有URLを作成できませんでした。"); }
+  }
+  useEffect(() => {
+    const name = srcFromSearch(location.search);
+    if (name === null) return;
+    let cancelled = false;
+    const params = new URLSearchParams(location.search);
+    params.delete(SRC_PARAM);
+    const rest = params.toString();
+    history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash}`);
+    fetchLesson(name, location.href).then(next => {
+      if (cancelled) return;
+      setLesson(next); resetReading(); setTeacher(false); setMessage("公開された教材を読み込みました。");
+    }).catch(e => { if (!cancelled) setMessage(e instanceof Error ? e.message : "公開された教材を読み込めませんでした。"); });
+    return () => { cancelled = true; };
   }, []);
   async function makeShare() {
     setShareMessage(""); setShareUrl(""); setQrUrl("");
@@ -187,6 +216,20 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
           <input readOnly aria-label="共有URL" value={shareUrl} onFocus={e => e.target.select()} />
           {qrUrl && <img src={qrUrl} width={240} height={240} alt="教材共有用のQRコード" />}
         </div>}
+        <details className="fr-public">
+          <summary>公開URLで共有（長い教材向け）</summary>
+          <p>教師の手順：①「教材を書き出す」でJSONを保存 → ②リポジトリの <code>public/lessons/</code> に置いて push（Pagesに自動公開） → ③下にファイル名（例：<code>foo.json</code>）を入力して共有URL・QRを作成。</p>
+          <p><strong>注意：</strong>公開リポジトリのため、置いた教材は誰でも閲覧できます。個人情報や非公開の教材は置かないでください。</p>
+          <div className="fr-actions">
+            <input aria-label="公開する教材のファイル名" placeholder="foo.json" maxLength={200} value={pubName} onChange={e => setPubName(e.target.value)} />
+            <button disabled={!pubName.trim()} onClick={() => void makePublicShare()}>共有URLとQRを作成</button>
+          </div>
+          {pubMessage && <p className="fr-message" role="status">{pubMessage}</p>}
+          {pubUrl && <div className="fr-share">
+            <input readOnly aria-label="公開URLの共有リンク" value={pubUrl} onFocus={e => e.target.select()} />
+            {pubQr && <img src={pubQr} width={240} height={240} alt="公開URL共有用のQRコード" />}
+          </div>}
+        </details>
         <label>教材名<input maxLength={80} value={lesson.title} onChange={e => setLesson({ ...lesson, title: e.target.value })} /></label>
         <details><summary>本文を貼り付ける（解説なし）</summary>
           <p>解説付き教材の本文を変更すると、位置のずれを防ぐため解説をすべて解除します。</p>
