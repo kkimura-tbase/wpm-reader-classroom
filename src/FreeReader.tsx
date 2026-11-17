@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Home from "./App";
+import type { NotesControls } from "./App";
 import { downloadMarkedLesson } from "./markedImage";
 import { allowance, downloadJson, lookupKey, measuredWpm, tokenize } from "./lesson";
 import type { ReadingLesson, ReadingRecord } from "./lesson";
@@ -29,6 +30,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   const [setupOpen, setSetupOpen] = useState(true);
   const readingPanelRef = useRef<HTMLElement>(null);
   const passageRef = useRef<HTMLElement>(null);
+  const notesRef = useRef<NotesControls>(null);
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [ratio, setRatio] = useState(60);
@@ -101,6 +103,13 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     setTapped([]); setExportMessage("");
     setPhase("ready"); setLookedAt([]); setMarked([]); setSelected(null); setSeconds(0); setResult(null); startRef.current = null;
   }
+  function resetAll() {
+    if (!confirm("計測・設定・黄色マーカー・手書きメモをリセットしますか？教材と読書記録は残ります。")) return;
+    notesRef.current?.reset();
+    resetReading(); setPercent(5); setRatio(60); setNotesLeft(false); setMessage("");
+    if (passageRef.current) passageRef.current.scrollTop = 0;
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
   function start() {
     if (!words.length || words.length > 1000 || startRef.current !== null) return;
     setSelected(null); setLookedAt([]); setMarked([]); setResult(null); setSeconds(0);
@@ -157,7 +166,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   });
 
   return <main className="free-reader">
-    <header className="fr-heading"><div><h1>自由読解</h1></div></header>
+    <header className="fr-heading"><div><h1>自由読解</h1></div><button className="reset-link" disabled={exporting} onClick={resetAll}>リセット</button></header>
     <details className="fr-setup" open={setupOpen} onToggle={e => setSetupOpen(e.currentTarget.open)}>
       <summary>読解の設定 <span className="fr-setup-summary">辞書 {percent}%・{limit}語まで</span></summary>
       <fieldset disabled={phase !== "ready"}>
@@ -223,7 +232,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
           <button className="fr-undo-tap" onClick={() => undoTap(token.index)}>このタップを取り消す</button></div>
         </aside>}
       </section>
-      <section className="fr-notes"><h2>手書きメモ</h2><NotesBoard notesOnly /></section>
+      <section className="fr-notes"><h2>手書きメモ</h2><NotesBoard notesOnly notesRef={notesRef} /></section>
     </div>
     {(marked.length > 0 || tapped.length > 0) && <section className="fr-review"><h2>あとで確認・タップした単語</h2>
         <div className="fr-actions">{words.filter(w => marked.includes(w.index) || tapped.includes(w.index)).map(w => <button key={w.index} onClick={() => { const target = passageRef.current?.querySelector<HTMLElement>(`[data-word-index="${w.index}"]`); target?.scrollIntoView({ block: "center", behavior: "instant" }); requestAnimationFrame(() => choose(w.index)); }}>{marked.includes(w.index) ? "☆ " : ""}{w.word} <small>#{w.index+1}</small></button>)}</div>

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import type { Ref } from "react";
 import QRCode from "qrcode";
 import type { ReadingLesson } from "./lesson";
 import { changeLessonText } from "./sharedLesson";
 import { canDrawPointer, isStylusTouch } from "./canvasInput";
 
-const WPM_PRESETS = [80, 100, 120, 140, 160, 200, 250, 300];
+export type NotesControls = { reset: () => void };
 const COLORS = [
   { value: "#17212b", label: "黒" },
   { value: "#3157d5", label: "青" },
@@ -80,9 +81,9 @@ const formatTime = (seconds: number) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy, initialWpm }: {
+export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy, initialWpm, notesRef }: {
   notesOnly?: boolean; lesson?: ReadingLesson; onLessonChange?: (lesson: ReadingLesson) => void;
-  onBusy?: (busy: boolean) => void; initialWpm?: number;
+  onBusy?: (busy: boolean) => void; initialWpm?: number; notesRef?: Ref<NotesControls>;
 }) {
   const drawingKey = notesOnly ? "wpm-free-drawing" : "wpm-reader-drawing";
   const [tab, setTab] = useState<Tab>(notesOnly ? "notes" : "setup");
@@ -141,6 +142,7 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
   const lastRef = useRef<CanvasPoint>({ x: 0, y: 0 });
   const drawingStyleRef = useRef<{ eraser: boolean; size: number; color: string }>({ eraser: false, size: 4, color: COLORS[0].value });
   const canvasSaveGenerationRef = useRef(0);
+  const canvasRestoreGenerationRef = useRef(0);
   const committedSnapshotRef = useRef<CanvasSnapshot>(Promise.resolve(""));
   const historyBusyRef = useRef(false);
   const speechStartedRef = useRef(false);
@@ -340,11 +342,12 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
   };
 
   const restoreCanvas = useCallback((data?: string | null) => {
+    const generation = ++canvasRestoreGenerationRef.current;
     const canvas = canvasRef.current; if (!canvas) return;
     const ctx = canvas.getContext("2d"); if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!data) return;
-    const img = new Image(); img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, img.height * canvas.width / img.width); img.src = data;
+    const img = new Image(); img.onload = () => { if (generation === canvasRestoreGenerationRef.current) ctx.drawImage(img, 0, 0, canvas.width, img.height * canvas.width / img.width); }; img.src = data;
   }, []);
   const layoutCanvasAtZoom = useCallback((zoom: number) => {
     const canvas = canvasRef.current, stage = canvasStageRef.current, wrap = canvasWrapRef.current;
@@ -640,15 +643,17 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
   const undo = async () => {
     const prev=undoStack.at(-1); if (!prev || historyBusyRef.current) return;
     historyBusyRef.current=true;
+    const generation = ++canvasSaveGenerationRef.current;
     const current=committedSnapshotRef.current; setRedoStack(s=>[...s.slice(-19),current]); setUndoStack(s=>s.slice(0,-1));
-    try { const data=await prev; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem(drawingKey,data); else localStorage.removeItem(drawingKey); }
+    try { const data=await prev; if (generation !== canvasSaveGenerationRef.current) return; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem(drawingKey,data); else localStorage.removeItem(drawingKey); }
     finally { historyBusyRef.current=false; }
   };
   const redo = async () => {
     const next=redoStack.at(-1); if (!next || historyBusyRef.current) return;
     historyBusyRef.current=true;
+    const generation = ++canvasSaveGenerationRef.current;
     const current=committedSnapshotRef.current; setUndoStack(s=>[...s.slice(-19),current]); setRedoStack(s=>s.slice(0,-1));
-    try { const data=await next; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem(drawingKey,data); else localStorage.removeItem(drawingKey); }
+    try { const data=await next; if (generation !== canvasSaveGenerationRef.current) return; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem(drawingKey,data); else localStorage.removeItem(drawingKey); }
     finally { historyBusyRef.current=false; }
   };
   const clearCanvas = () => {
@@ -664,7 +669,25 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
     ctx.drawImage(canvas, 0, 0);
     const anchor = document.createElement("a"); anchor.href=exportCanvas.toDataURL("image/png"); anchor.download="reading-note.png"; anchor.click();
   };
-  const resetAll = () => { if (!confirm("設定と手書きメモをリセットしますか？読み込んだ教材は残ります。")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem(drawingKey); history.replaceState(null,"",`${location.pathname}${location.search}`); setWpm(160);  setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
+  const resetNotes = () => {
+    canvasSaveGenerationRef.current++;
+    committedSnapshotRef.current = Promise.resolve("");
+    drawingRef.current = false; drawingPointerRef.current = null;
+    scrollPointerRef.current = null; stylusTouchRef.current = null; pinchRef.current = null;
+    setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE);
+    setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1);
+    setUndoStack([]); setRedoStack([]); restoreCanvas(null);
+    canvasWrapRef.current?.scrollTo(0, 0);
+    localStorage.removeItem(drawingKey);
+  };
+  useImperativeHandle(notesRef, () => ({ reset: resetNotes }));
+  const resetAll = () => {
+    if (!confirm("計測・設定・手書きメモをリセットしますか？読み込んだ教材は残ります。")) return;
+    localStorage.removeItem("wpm-reader-v1");
+    history.replaceState(null,"",location.pathname + location.search);
+    setWpm(160); setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false);
+    resetNotes(); restart(); setTab("setup");
+  };
 
   return <main className={notesOnly ? "embedded-notes" : undefined}>
     <header className="topbar">
@@ -677,7 +700,10 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
     {tab === "setup" && <section className="setup shell">
       <div className="setup-heading"><div><h1>ペース読解</h1></div><div className="count-card"><strong>{words.length}</strong><span>語</span><small>約 {formatTime(totalSeconds)}</small></div></div>
       <div className="settings-row">
-        <div><label className="field-label">目標スピード（WPM）</label><div className="presets">{WPM_PRESETS.map(v=><button key={v} className={wpm===v?"selected":""} aria-pressed={wpm===v} onClick={()=>{setWpm(v);setShareUrl("");setQrDataUrl("")}}>{v}</button>)}</div></div>
+        <div className="pace-speed"><label className="field-label" htmlFor="pace-speed">目標スピード（WPM）</label>
+          <input id="pace-speed" className="wpm-slider" type="range" min="40" max="500" step="1" value={wpm} aria-valuetext={wpm + " WPM"} onChange={e=>{setWpm(Number(e.target.value));setShareUrl("");setQrDataUrl("")}}/>
+          <div className="fr-slider-labels" aria-hidden="true">{[40,100,200,300,400,500].map(value=><span key={value} style={{left:((value-40)*100/460)+"%"}}>{value}</span>)}</div>
+        </div>
         <label className="number-box"><span>細かく指定</span><div><input aria-label="目標WPM" type="number" min="40" max="500" value={wpm} onChange={e=>{setWpm(Math.min(500,Math.max(40,Number(e.target.value))));setShareUrl("");setQrDataUrl("")}}/><b>WPM</b></div></label>
       </div>
       <button className="primary start-button" onClick={start} disabled={!words.length}>リーディングを始める <span>→</span></button>
