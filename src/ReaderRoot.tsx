@@ -5,7 +5,6 @@ import { validateLesson } from "./lesson";
 import { LESSON_KEY, restoreLesson } from "./sharedLesson";
 import { decodeLesson, payloadFromHash } from "./share";
 import { fetchLesson, srcFromSearch, SRC_PARAM } from "./sharesrc";
-import "./free-reader.css";
 
 export default function ReaderRoot() {
   const [mode, setMode] = useState<"pace" | "free">("free");
@@ -39,7 +38,7 @@ export default function ReaderRoot() {
           : payload !== null ? await decodeLesson(payload) : await fetchLesson(src!, location.href);
         if (cancelled || id !== request) return;
         setMode("free"); setLesson(next); setPaceWpm(legacy?.wpm); setRevision(n => n + 1);
-        setMessage("教材を読み込みました。どちらの読解モードでも使えます。");
+        setMessage("");
         const url = new URL(location.href);
         url.hash = ""; url.searchParams.delete(SRC_PARAM);
         history.replaceState(null, "", url);
@@ -60,7 +59,7 @@ export default function ReaderRoot() {
       const next = validateLesson(JSON.parse(await file.text()));
       if (lesson && !confirm("教材を切り替えます。手書きメモは残ります。必要なら先に画像保存してください。")) return;
       setLesson(next); setPaceWpm(undefined); setRevision(n => n + 1);
-      setMessage("教材を読み込みました。どちらの読解モードでも使えます。");
+      setMessage("");
     } catch (error) { setMessage(error instanceof Error ? error.message : "教材を読み込めませんでした。"); }
     finally { setLoading(false); }
   }
@@ -70,16 +69,16 @@ export default function ReaderRoot() {
       <strong>WPM READER</strong>
       <button aria-pressed={mode === "free"} disabled={busy || loading} onClick={() => { if (mode === "pace") setPaceWpm(undefined); setMode("free"); }}>自由読解</button>
       <button aria-pressed={mode === "pace"} disabled={busy || loading} onClick={() => setMode("pace")}>ペース読解</button>
-      {busy && <small>モードの変更は計測を止めてからできます</small>}
+      {busy && <small>計測中</small>}
     </div>
     <section className="shared-material" aria-label="共通の教材">
-      <div><strong>{lesson?.title || "教材未読み込み"}</strong><p>同じ教材を自由読解・ペース読解で使えます。</p></div>
-      <label className="fr-file">教材ファイルを開く<input type="file" accept=".json,application/json" disabled={busy || loading} onChange={e => { void importFile(e.target.files?.[0]); e.target.value = ""; }} /></label>
+      <div><strong>{lesson?.title || "教材未読み込み"}</strong></div>
+      <label className={`fr-file fr-file-button${busy || loading ? " is-disabled" : ""}`}>＋ 教材ファイルを開く<input className="visually-hidden" type="file" accept=".json,application/json" disabled={busy || loading} onChange={e => { void importFile(e.target.files?.[0]); e.target.value = ""; }} /></label>
       {loading && <p role="status">教材を読み込み中…</p>}
       {message && <p role="status">{message}</p>}
       {saveError && <p role="alert">{saveError}</p>}
     </section>
-    {!lesson ? <main className="fr-empty"><h1>教材が読み込まれていません</h1><p>上の「教材ファイルを開く」から、配布された教材JSONを選んでください。</p><p>一度読み込むと、自由読解・ペース読解のどちらでも使えます。</p></main> : mode === "pace" ? <Home key={revision} lesson={lesson} onLessonChange={setLesson} onBusy={setBusy} initialWpm={paceWpm} />
+    {!lesson ? <main className="fr-empty"><h1>教材が読み込まれていません</h1><p>「教材ファイルを開く」から選んでください。</p></main> : mode === "pace" ? <Home key={revision} lesson={lesson} onLessonChange={setLesson} onBusy={setBusy} initialWpm={paceWpm} />
       : <FreeReader key={revision} lesson={lesson} setLesson={setLesson} onBusy={setBusy} />}
   </>;
 }

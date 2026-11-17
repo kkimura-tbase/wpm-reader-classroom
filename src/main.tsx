@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./ReaderRoot";
 import "./index.css";
+import "./free-reader.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -23,7 +23,6 @@ const MAX_WORDS = 1000;
 const MAX_TEXT_CHARS = 12000;
 const clampCanvasZoom = (value: number) => Math.min(MAX_CANVAS_ZOOM, Math.max(MIN_CANVAS_ZOOM, value));
 type Tab = "setup" | "reader" | "notes";
-type SourceMode = "paste" | "shared";
 type DrawingInputMode = "stylus" | "all";
 type LessonPackage = { v: 1; title: string; text: string; wpm: number };
 type CanvasPoint = { x: number; y: number };
@@ -103,7 +102,6 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voiceURI, setVoiceURI] = useState("");
   const [speechRate, setSpeechRate] = useState(1);
-  const [sourceMode, setSourceMode] = useState<SourceMode>("paste");
 
   const [shareMessage, setShareMessage] = useState("");
   const [shareUrl, setShareUrl] = useState("");
@@ -666,69 +664,63 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
     ctx.drawImage(canvas, 0, 0);
     const anchor = document.createElement("a"); anchor.href=exportCanvas.toDataURL("image/png"); anchor.download="reading-note.png"; anchor.click();
   };
-  const resetAll = () => { if (!confirm("設定と手書きメモをリセットしますか？読み込んだ教材は残ります。")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem(drawingKey); history.replaceState(null,"",`${location.pathname}${location.search}`); setWpm(160);  setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
+  const resetAll = () => { if (!confirm("設定と手書きメモをリセットしますか？読み込んだ教材は残ります。")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem(drawingKey); history.replaceState(null,"",`${location.pathname}${location.search}`); setWpm(160);  setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
 
   return <main className={notesOnly ? "embedded-notes" : undefined}>
     <header className="topbar">
-      <button className="brand" onClick={() => setTab("setup")} aria-label="ホームへ"><span>W</span><div><strong>WPM Reader</strong></div></button>
       <nav aria-label="画面切り替え">
-        {([ ["setup","1  教材"], ["reader","2  リーディング"], ["notes","3  まとめ"] ] as [Tab,string][]).map(([key,label])=><button key={key} className={tab===key?"active":""} onClick={()=>setTab(key)}>{label}</button>)}
+        {([ ["setup","教材"], ["reader","読解"], ["notes","メモ"] ] as [Tab,string][]).map(([key,label])=><button key={key} className={tab===key?"active":""} aria-current={tab===key?"page":undefined} onClick={()=>setTab(key)}>{label}</button>)}
       </nav>
       <button className="reset-link" onClick={resetAll}>リセット</button>
     </header>
 
     {tab === "setup" && <section className="setup shell">
-      <div className="eyebrow">LESSON SETUP <span>自動保存中</span></div>
-      <div className="setup-heading"><div><h1>Choose what you’ll<br/>read today.</h1><p>Paste your own text, or choose one shared by your teacher.</p></div><div className="count-card"><strong>{words.length}</strong><span>WORDS</span><small>約 {formatTime(totalSeconds)}</small></div></div>
-      <div className="source-tabs" role="tablist" aria-label="教材の選び方"><button className={sourceMode==="paste"?"active":""} onClick={()=>setSourceMode("paste")}>自分で貼り付け</button><button className={sourceMode==="shared"?"active":""} onClick={()=>setSourceMode("shared")}>共有教材</button></div>
-      {sourceMode === "paste" ? <>
-        <label className="field-label" htmlFor="material">教材本文 <span>ENGLISH TEXT</span></label>
-        <textarea id="material" className="material" value={text} onChange={e=>{setText(e.target.value);restart();setShareUrl("");setQrDataUrl("");setQrOpen(false);}} maxLength={MAX_TEXT_CHARS} spellCheck={false}/>
-        <small className="text-limit">{words.length.toLocaleString()} / {MAX_WORDS.toLocaleString()}語　·　{text.length.toLocaleString()} / {MAX_TEXT_CHARS.toLocaleString()}文字</small>
-      </> : <div className="class-library shared-library">
-        {lesson ? <div className="shared-material-card"><span><strong>{lesson.title}</strong><small>{words.length.toLocaleString()} words　·　自由読解と共通の教材</small></span><b>読み込み済み</b></div> : <div className="shared-empty"><strong>共有リンクから教材を受け取れます</strong><p>先生から届いたリンクを開くと、教材とWPMが自動的に読み込まれます。</p></div>}
-        {shareMessage && <p className="library-message">{shareMessage}</p>}
-      </div>}
-      <div className="teacher-area"><button className="teacher-toggle" onClick={()=>setTeacherOpen(v=>!v)}>先生用：この教材の共有リンクを作成 {teacherOpen?"−":"＋"}</button>{teacherOpen&&<div className="teacher-form"><label>教材名<input value={teacherTitle} onChange={e=>{setTeacherTitle(e.target.value);setShareUrl("");setQrDataUrl("")}} placeholder="例：Lesson 3 Reading" maxLength={80}/></label><button className="primary" onClick={createShareLink} disabled={shareBusy||!text.trim()}>{shareBusy?"作成中…":"リンク・QRを作成"}</button>{shareUrl&&<><label className="share-result">共有リンク<input value={shareUrl} readOnly onFocus={e=>e.currentTarget.select()}/></label><button className="show-qr" onClick={()=>setQrOpen(true)}>QRコードを大きく表示</button></>}<p>教材本文はサーバーへ保存されません。リンクを知っている人は教材を開けます。上限は{MAX_WORDS.toLocaleString()}語・{MAX_TEXT_CHARS.toLocaleString()}文字です。</p>{shareMessage&&<p className="share-message">{shareMessage}</p>}</div>}</div>
+      <div className="setup-heading"><div><h1>ペース読解</h1></div><div className="count-card"><strong>{words.length}</strong><span>語</span><small>約 {formatTime(totalSeconds)}</small></div></div>
       <div className="settings-row">
-        <div><label className="field-label">目標スピード <span>WORDS PER MINUTE</span></label><div className="presets">{WPM_PRESETS.map(v=><button key={v} className={wpm===v?"selected":""} onClick={()=>{setWpm(v);setShareUrl("");setQrDataUrl("")}}>{v}</button>)}</div></div>
-        <label className="number-box"><span>細かく指定</span><div><input type="number" min="40" max="500" value={wpm} onChange={e=>{setWpm(Math.min(500,Math.max(40,Number(e.target.value))));setShareUrl("");setQrDataUrl("")}}/><b>WPM</b></div></label>
+        <div><label className="field-label">目標スピード（WPM）</label><div className="presets">{WPM_PRESETS.map(v=><button key={v} className={wpm===v?"selected":""} aria-pressed={wpm===v} onClick={()=>{setWpm(v);setShareUrl("");setQrDataUrl("")}}>{v}</button>)}</div></div>
+        <label className="number-box"><span>細かく指定</span><div><input aria-label="目標WPM" type="number" min="40" max="500" value={wpm} onChange={e=>{setWpm(Math.min(500,Math.max(40,Number(e.target.value))));setShareUrl("");setQrDataUrl("")}}/><b>WPM</b></div></label>
       </div>
       <button className="primary start-button" onClick={start} disabled={!words.length}>リーディングを始める <span>→</span></button>
+      <details className="pace-material"><summary>本文を編集</summary>
+        <label className="field-label" htmlFor="material">教材本文</label>
+        <textarea id="material" className="material" value={text} onChange={e=>{setText(e.target.value);restart();setShareUrl("");setQrDataUrl("");setQrOpen(false);}} maxLength={MAX_TEXT_CHARS} spellCheck={false}/>
+        {(words.length > MAX_WORDS || text.length >= MAX_TEXT_CHARS) && <p role="alert">教材は{MAX_WORDS}語・{MAX_TEXT_CHARS}文字までです。</p>}
+      </details>
+      <div className="teacher-area"><button className="teacher-toggle" onClick={()=>setTeacherOpen(v=>!v)}>共有リンク・QR {teacherOpen?"−":"＋"}</button>{teacherOpen&&<div className="teacher-form"><label>教材名<input value={teacherTitle} onChange={e=>{setTeacherTitle(e.target.value);setShareUrl("");setQrDataUrl("")}} placeholder="例：Lesson 3 Reading" maxLength={80}/></label><button className="primary" onClick={createShareLink} disabled={shareBusy||!text.trim()}>{shareBusy?"作成中…":"リンク・QRを作成"}</button>{shareUrl&&<><label className="share-result">共有リンク<input value={shareUrl} readOnly onFocus={e=>e.currentTarget.select()}/></label><button className="show-qr" onClick={()=>setQrOpen(true)}>QRコードを大きく表示</button></>}<p>リンクを知っている人は教材を閲覧できます。</p>{shareMessage&&<p className="share-message">{shareMessage}</p>}</div>}</div>
+
     </section>}
 
     {tab === "reader" && <section className="reader shell-wide">
-      <div className="reader-head"><div><div className="eyebrow">READING SESSION</div><h1>{playing ? "Keep the rhythm. Keep moving." : index ? "Paused." : "Ready when you are."}</h1></div><div className="wpm-badge"><strong>{wpm}</strong><span>WPM</span></div></div>
+      <div className="reader-head"><div><h1>{playing ? "読解中" : index >= words.length ? "読了" : index ? "一時停止" : "読解前"}</h1></div><div className="wpm-badge"><strong>{wpm}</strong><span>WPM</span></div></div>
       <div className="progress-track"><i style={{width:`${progress}%`}}/></div>
       <div className="stats"><div><span>進捗</span><strong>{Math.round(progress)}%</strong></div><div><span>経過時間</span><strong>{formatTime(elapsed)}</strong></div><div><span>残り時間</span><strong>約 {formatTime(remaining)}</strong></div><div><span>読了語数</span><strong>{index} <small>/ {words.length}</small></strong></div></div>
       <article className="reading-card" aria-live="off">{readingParagraphs.map(paragraph=><p key={paragraph.key} className={paragraph.hasSourceIndent?"source-indented":""}>{paragraph.parts.map(part=>part.kind==="space"?<span className="reading-space" key={part.key}>{part.value}</span>:<span key={part.key} className={part.wordIndex<index?"read":""}>{part.value}</span>)}</p>)}</article>
-      <div className="controls"><button onClick={restart}>↺<span>最初から</span></button><button onClick={rewind}>−10<small>秒</small><span>10秒戻る</span></button>{playing?<button className="play" onClick={pause}>Ⅱ<span>一時停止</span></button>:<button className="play" onClick={index?resume:start}>▶<span>{index?"再開":"再生"}</span></button>}<button onClick={()=>setTab("notes")}>✎<span>まとめへ</span></button></div>
-      <div className="speech-panel"><label className="switch"><input type="checkbox" checked={speechOn} disabled={!speechSupported||!voices.length} onChange={e=>{setSpeechOn(e.target.checked); stopSpeech();}}/><i/><span><strong>英語音声読み上げ</strong><small>{!speechSupported?"このブラウザは音声に対応していません":!voices.length?"利用できる英語音声がありません":"音声の位置に本文を同期します"}</small></span></label><label>英語の声<select value={voiceURI} onChange={e=>{stopSpeech();setVoiceURI(e.target.value)}} disabled={!speechSupported||!voices.length}>{voices.map(v=><option value={v.voiceURI} key={v.voiceURI}>{v.name}（{v.lang}）</option>)}</select></label><label>速度補正<select value={speechRate} onChange={e=>{stopSpeech();setSpeechRate(Number(e.target.value))}}><option value="0.85">ゆっくり</option><option value="1">標準</option><option value="1.15">速め</option></select></label></div>
+      <div className="controls"><button onClick={restart}>↺<span>最初から</span></button><button onClick={rewind}>−10<small>秒</small><span>10秒戻る</span></button>{playing?<button className="play" onClick={pause}>Ⅱ<span>一時停止</span></button>:<button className="play" onClick={index?resume:start}>▶<span>{index?"再開":"再生"}</span></button>}<button onClick={()=>setTab("notes")}>✎<span>メモ</span></button></div>
+      <div className="speech-panel"><label className="switch"><input type="checkbox" checked={speechOn} disabled={!speechSupported||!voices.length} onChange={e=>{setSpeechOn(e.target.checked); stopSpeech();}}/><i/><span><strong>英語音声読み上げ</strong>{(!speechSupported || !voices.length) && <small>英語音声を利用できません</small>}</span></label><label>英語の声<select value={voiceURI} onChange={e=>{stopSpeech();setVoiceURI(e.target.value)}} disabled={!speechSupported||!voices.length}>{voices.map(v=><option value={v.voiceURI} key={v.voiceURI}>{v.name}（{v.lang}）</option>)}</select></label><label>速度補正<select value={speechRate} onChange={e=>{stopSpeech();setSpeechRate(Number(e.target.value))}}><option value="0.85">ゆっくり</option><option value="1">標準</option><option value="1.15">速め</option></select></label></div>
     </section>}
 
     {tab === "notes" && <section className="notes shell-wide">
-      <div className="notes-head"><div><div className="eyebrow">QUICK REFLECTION</div><h1>Capture what<br/>stayed with you.</h1></div><p>It doesn’t have to be perfect.<br/>Start with the words, ideas, or images you remember.</p></div>
+      <div className="notes-head"><h1>手書きメモ</h1></div>
       <div className="notes-grid"><div className="paper">
         <div className="toolrow">
           <div className="tools">
-            <button className={!panMode&&!eraser?"on":""} onClick={()=>{setPanMode(false);setEraser(false)}}>✎ <span>ペン</span></button>
-            <button className={!panMode&&eraser?"on":""} onClick={()=>{setPanMode(false);setEraser(true)}}>▱ <span>消しゴム</span></button>
+            <button className={!panMode&&!eraser?"on":""} onClick={()=>{setPanMode(false);setEraser(false)}} aria-pressed={!panMode&&!eraser}>✎ <span>ペン</span></button>
+            <button className={!panMode&&eraser?"on":""} onClick={()=>{setPanMode(false);setEraser(true)}} aria-pressed={!panMode&&eraser}>▱ <span>消しゴム</span></button>
             <button className={panMode?"on":""} onClick={()=>setPanMode(value=>!value)} aria-pressed={panMode}>✥ <span>移動</span></button>
-            {COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false);setPanMode(false)}} aria-label={`${color.label}のペン`}/>) }
-            <label className="size">細<input type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label>
+            {COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false);setPanMode(false)}} aria-label={`${color.label}のペン`} aria-pressed={penColor===color.value}/>) }
+            <label className="size">細<input aria-label={eraser?"消しゴムの太さ":"ペンの太さ"} type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label>
             <div className="input-modes" role="group" aria-label="手書き入力方法"><span>入力</span><button className={inputMode==="stylus"?"on":""} onClick={()=>{setInputMode("stylus");setPanMode(false)}} aria-pressed={inputMode==="stylus"} aria-label="画面用ペンまたはマウスで書く。指はキャンバスの移動とピンチ拡大に使用">ペン・マウス</button><button className={inputMode==="all"?"on":""} onClick={()=>{setInputMode("all");setPanMode(false)}} aria-pressed={inputMode==="all"} aria-label="指、画面用ペン、マウスで書く。拡大はボタンを使用">指も使う</button></div>
           </div>
           <div className="history">
-            <div className="zoom-controls" role="group" aria-label="キャンバスの拡大率"><span>キャンバス</span><button onClick={()=>zoomCanvasTo(canvasZoomRef.current-CANVAS_ZOOM_STEP)} disabled={canvasZoom<=MIN_CANVAS_ZOOM} aria-label="キャンバスを縮小">−</button><button className="zoom-value" onClick={()=>zoomCanvasTo(1)} aria-label="キャンバスを100パーセントに戻す">{Math.round(canvasZoom*100)}%</button><button onClick={()=>zoomCanvasTo(canvasZoomRef.current+CANVAS_ZOOM_STEP)} disabled={canvasZoom>=MAX_CANVAS_ZOOM} aria-label="キャンバスを拡大">＋</button></div>
-            <button onClick={undo} disabled={!undoStack.length}>↶</button><button onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button>
+            <div className="zoom-controls" role="group" aria-label="キャンバスの拡大率"><button onClick={()=>zoomCanvasTo(canvasZoomRef.current-CANVAS_ZOOM_STEP)} disabled={canvasZoom<=MIN_CANVAS_ZOOM} aria-label="キャンバスを縮小">−</button><button className="zoom-value" onClick={()=>zoomCanvasTo(1)} aria-label="キャンバスを100パーセントに戻す">{Math.round(canvasZoom*100)}%</button><button onClick={()=>zoomCanvasTo(canvasZoomRef.current+CANVAS_ZOOM_STEP)} disabled={canvasZoom>=MAX_CANVAS_ZOOM} aria-label="キャンバスを拡大">＋</button></div>
+            <button aria-label="元に戻す" title="元に戻す" onClick={undo} disabled={!undoStack.length}>↶</button><button aria-label="やり直す" title="やり直す" onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button>
           </div>
         </div>
         <div className="canvas-wrap" ref={canvasWrapRef} style={{ overflowY: "scroll", overflowX: canvasZoom > 1 ? "auto" : "hidden" }}>
           <div className="canvas-stage" ref={canvasStageRef}><canvas className={`${inputMode==="all"?"finger-input":"stylus-input"} ${panMode?"pan-input":""}`} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} aria-label="手書きメモ用キャンバス"/></div>
-          <span>{panMode?"MOVE / ドラッグで移動":inputMode==="stylus"?"PEN / MOUSE / 指で移動・2本指で拡大":"TOUCH / PEN / MOUSE / 拡大は上のボタン"}</span>
         </div>
       </div></div>
     </section>}
-    {qrOpen && <div className="qr-backdrop" onClick={()=>setQrOpen(false)}><section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" onClick={e=>e.stopPropagation()}><button className="qr-close" onClick={()=>setQrOpen(false)} aria-label="QRコードを閉じる">×</button><div className="eyebrow">SHARE WITH CLASS</div><h2 id="qr-title">{teacherTitle || "Reading lesson"}</h2><p>生徒はカメラでQRコードを読み取ってください。</p>{qrDataUrl?<img src={qrDataUrl} alt={`${teacherTitle || "教材"}の共有QRコード`}/>:<div className="qr-error">{qrError || "QRコードを作成できませんでした。"}</div>}<div className="qr-actions"><button onClick={copyExistingLink}>リンクをコピー</button><button className="primary" onClick={saveQrImage} disabled={!qrDataUrl}>QR画像を保存 ↓</button></div></section></div>}
+    {qrOpen && <div className="qr-backdrop" onClick={()=>setQrOpen(false)}><section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" onClick={e=>e.stopPropagation()}><button className="qr-close" onClick={()=>setQrOpen(false)} aria-label="QRコードを閉じる">×</button><h2 id="qr-title">{teacherTitle || "Reading lesson"}</h2>{qrDataUrl?<img src={qrDataUrl} alt={`${teacherTitle || "教材"}の共有QRコード`}/>:<div className="qr-error">{qrError || "QRコードを作成できませんでした。"}</div>}<div className="qr-actions"><button onClick={copyExistingLink}>リンクをコピー</button><button className="primary" onClick={saveQrImage} disabled={!qrDataUrl}>QR画像を保存 ↓</button></div></section></div>}
   </main>;
 }
