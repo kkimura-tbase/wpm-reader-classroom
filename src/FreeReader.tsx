@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Home from "./App";
 import QRCode from "qrcode";
+import { downloadMarkedLesson } from "./markedImage";
 import { allowance, downloadJson, lookupKey, measuredWpm, tokenize, validateLesson } from "./lesson";
 import { createShareUrl } from "./share";
 import { createSrcShareUrl } from "./sharesrc";
@@ -23,6 +24,9 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   const [percent, setPercent] = useState(5);
   const [used, setUsed] = useState<string[]>([]);
   const [marked, setMarked] = useState<number[]>([]);
+  const [tapped, setTapped] = useState<number[]>([]);
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [result, setResult] = useState<ReadingRecord | null>(null);
@@ -104,7 +108,16 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     };
   }, []);
 
+  useEffect(() => { setTapped([]); setExportMessage(""); }, [lesson.text]);
+
+  async function exportImage() {
+    setExporting(true); setExportMessage("");
+    try { await downloadMarkedLesson(lesson, tapped); }
+    catch (error) { setExportMessage(error instanceof Error ? error.message : "画像を保存できませんでした。"); }
+    finally { setExporting(false); }
+  }
   function resetReading() {
+    setTapped([]); setExportMessage("");
     setPhase("ready"); setUsed([]); setMarked([]); setSelected(null); setSeconds(0); setResult(null); startRef.current = null;
   }
   function replaceLesson(next: ReadingLesson) {
@@ -125,6 +138,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     setSeconds(elapsed); setResult(record); setRecords(next); save("wpm-free-history", next); setPhase("done"); setSelected(null);
   }
   function choose(index: number) {
+    if (!teacher) setTapped(old => old.includes(index) ? old : [...old, index]);
     if (selected === index) {
       setSelected(null);
       return;
@@ -161,7 +175,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     const before = lesson.text.slice(last, w.start); last = w.stop;
     const isGroup = canSee && gloss && w.index >= gloss.index && w.index < (gloss.end ?? gloss.index + 1);
     return <span key={w.index}>{before}<button
-      className={`fr-word ${marked.includes(w.index) ? "marked" : ""} ${used.includes(lookupKey(w.word)) ? "looked" : ""} ${selected === w.index ? "selected" : ""} ${isGroup ? "phrase" : ""}`}
+      className={`fr-word ${marked.includes(w.index) ? "marked" : ""} ${tapped.includes(w.index) ? "highlighted" : ""} ${selected === w.index ? "selected" : ""} ${isGroup ? "phrase" : ""}`}
       data-word-index={w.index} onClick={() => choose(w.index)} aria-label={`${w.word}（${w.index + 1}語目）の解説`} aria-pressed={selected === w.index}>{w.word}</button></span>;
   });
 
@@ -250,9 +264,15 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
       </section>
       <section className="fr-notes"><h2>手書きメモ</h2><p>内容を自分の言葉や図でまとめよう</p><NotesBoard notesOnly /></section>
     </div>
-    <section className="fr-review"><h2>あとで確認・調べた単語</h2>
-      {marked.length === 0 && used.length === 0 ? <p>気になる単語に印をつけると、ここに並びます。</p> :
-        <div className="fr-actions">{words.filter(w => marked.includes(w.index) || used.includes(lookupKey(w.word))).map(w => <button key={w.index} onClick={() => { choose(w.index); document.querySelector(".fr-reading")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{marked.includes(w.index) ? "☆ " : ""}{w.word} <small>#{w.index+1}</small></button>)}</div>}
+    <section className="fr-review"><h2>黄色マーカー付きの本文を保存</h2>
+      <p>タップした箇所に黄色マーカーを付けます。同じ綴りでも、タップしていない箇所には付きません。解説未登録・上限到達後のタップも対象です。</p>
+      <div className="fr-actions"><button disabled={phase !== "done" || exporting} onClick={() => void exportImage()}>{exporting ? "画像を作成中…" : "マーカー付き本文を画像保存（PNG）"}</button><span>マーカー：{tapped.length}箇所</span></div>
+      <p>{phase !== "done" ? "「読了・WPMを表示」の後に保存できます。" : "読了後にタップした単語も画像に反映されます。"}白背景の画像に教材名と本文全体を保存します。再読・教材変更の前に保存してください。</p>
+      {exportMessage && <p role="alert">{exportMessage}</p>}
+    </section>
+    <section className="fr-review"><h2>あとで確認・タップした単語</h2>
+      {marked.length === 0 && tapped.length === 0 ? <p>気になる単語に印をつけると、ここに並びます。</p> :
+        <div className="fr-actions">{words.filter(w => marked.includes(w.index) || tapped.includes(w.index)).map(w => <button key={w.index} onClick={() => { choose(w.index); document.querySelector(".fr-reading")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{marked.includes(w.index) ? "☆ " : ""}{w.word} <small>#{w.index+1}</small></button>)}</div>}
     </section>
     <details className="fr-history"><summary>読書記録（この端末・最大100件）</summary>
       <div className="fr-actions"><button onClick={() => downloadJson(records, "reading-history.json")}>履歴を書き出す</button><button disabled={phase === "reading" || !records.length} onClick={() => { if (confirm("この端末の自由読解の履歴を消去しますか？")) { setRecords([]); save("wpm-free-history", []); } }}>履歴を消去</button></div>
