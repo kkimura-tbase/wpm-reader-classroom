@@ -31,6 +31,9 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   const [seconds, setSeconds] = useState(0);
   const [result, setResult] = useState<ReadingRecord | null>(null);
   const [teacher, setTeacher] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(true);
+  const readingPanelRef = useRef<HTMLElement>(null);
+  const passageRef = useRef<HTMLElement>(null);
   const [draft, setDraft] = useState<Gloss | null>(null);
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -116,7 +119,18 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     catch (error) { setExportMessage(error instanceof Error ? error.message : "画像を保存できませんでした。"); }
     finally { setExporting(false); }
   }
+  function focusReading() {
+    requestAnimationFrame(() => {
+      if (passageRef.current) passageRef.current.scrollTop = 0;
+      readingPanelRef.current?.scrollIntoView({ block: "start", behavior: "instant" });
+    });
+  }
+  function prepareReread() {
+    if (tapped.length && !confirm("再読すると黄色マーカーが消えます。必要な画像は保存しましたか？")) return;
+    resetReading(); focusReading();
+  }
   function resetReading() {
+    setSetupOpen(true);
     setTapped([]); setExportMessage("");
     setPhase("ready"); setUsed([]); setMarked([]); setSelected(null); setSeconds(0); setResult(null); startRef.current = null;
   }
@@ -128,6 +142,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     if (!words.length || words.length > 1000 || startRef.current !== null) return;
     setTeacher(false); setSelected(null); setUsed([]); setMarked([]); setResult(null); setSeconds(0);
     startRef.current = performance.now(); setPhase("reading"); setMessage("");
+    setSetupOpen(false); focusReading();
   }
   function finish() {
     if (startRef.current === null) return;
@@ -136,6 +151,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     const record: ReadingRecord = { id: crypto.randomUUID(), date: new Date().toISOString(), title: lesson.title, text: lesson.text, words: words.length, seconds: elapsed, wpm: measuredWpm(words.length, elapsed), used: used.length, percent };
     const next = [record, ...records].slice(0, 100);
     setSeconds(elapsed); setResult(record); setRecords(next); save("wpm-free-history", next); setPhase("done"); setSelected(null);
+    requestAnimationFrame(() => passageRef.current?.querySelector(".fr-passage-end")?.scrollIntoView({ block: "end", behavior: "instant" }));
   }
   function choose(index: number) {
     if (!teacher) setTapped(old => old.includes(index) ? old : [...old, index]);
@@ -180,10 +196,19 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   });
 
   return <main className="free-reader">
-    <header className="fr-heading"><div><div className="eyebrow">READ AT YOUR OWN PACE</div><h1>自由読解</h1><p>読む。必要な言葉を調べる。自分の言葉でまとめる。</p></div><span className="fr-chip">AI・外部辞書への通信なし</span></header>
-    <details className="fr-setup" open={phase === "ready" ? true : undefined}>
-      <summary>教材と設定 — {lesson.title}</summary>
+    <header className="fr-heading"><div><h1>自由読解</h1><p>① 上限を選ぶ → ② 開始して読む → ③ 本文末尾で読了・画像保存</p></div></header>
+    <details className="fr-setup" open={setupOpen} onToggle={e => setSetupOpen(e.currentTarget.open)}>
+      <summary>読解の設定 <span className="fr-setup-summary">辞書 {percent}%・{limit}語まで</span></summary>
       <fieldset disabled={phase !== "ready"}>
+        <label>調べられる単語数：{limit}語まで（本文の{percent}%）
+          <select className="fr-lookup-limit" aria-label="辞書利用の上限" value={percent} onChange={e => setPercent(Number(e.target.value))}>
+            {[0, 1, 2, 3, 5, 10, 15, 20].map(value => <option key={value} value={value}>{value === 0 ? "0% — 調べずに読む" : `${value}% — ${allowance(words.length, value)}語まで`}</option>)}
+          </select>
+        </label>
+        {percent > 0 && limit === 0 && <p>この本文の長さでは上限が0語になります。調べたい場合は、より高い割合を選んでください。</p>}
+        <p>{words.length}語 ／ 解説 {lesson.glosses.length}件。上限は小数点以下切り捨て。同じ綴りの再確認は無料（大文字・小文字は区別しません）。</p>
+        {!lesson.glosses.length && <p>本文のみの教材です。WPM計測・手書きメモを利用できます。</p>}
+        <details className="fr-teacher-tools"><summary>教師用ツール・教材の編集と配布</summary>
         <div className="fr-actions">
           <button onClick={() => replaceLesson(SAMPLE)}>サンプル教材</button>
           <button onClick={() => downloadJson(lesson, "reading-lesson.json")}>教材を書き出す</button>
@@ -217,15 +242,8 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
             setLesson({ ...lesson, text: e.target.value, glosses: [] }); setSelected(null);
           }} />
         </details>
-        <label>調べられる単語数：{limit}語まで（本文の{percent}%）
-          <select className="fr-lookup-limit" aria-label="辞書利用の上限" value={percent} onChange={e => setPercent(Number(e.target.value))}>
-            {[0, 1, 2, 3, 5, 10, 15, 20].map(value => <option key={value} value={value}>{value === 0 ? "0% — 調べずに読む" : `${value}% — ${allowance(words.length, value)}語まで`}</option>)}
-          </select>
-        </label>
-        {percent > 0 && limit === 0 && <p>この本文の長さでは上限が0語になります。調べたい場合は、より高い割合を選んでください。</p>}
-        <p>{words.length}語 ／ 解説 {lesson.glosses.length}件。上限は小数点以下切り捨て。同じ綴りの再確認は無料（大文字・小文字は区別しません）。</p>
-        {!lesson.glosses.length && <p>本文のみの教材です。WPM計測・手書きメモを利用できます。</p>}
         <p>教師用プレビューは確認用です。ログインによるアクセス制限ではありません。</p>
+        </details>
       </fieldset>
     </details>
     {message && <p className="fr-message" role="status">{message}</p>}
@@ -236,20 +254,40 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
       <div><small>本文</small><strong>{words.length}語</strong></div>
       {phase === "ready" && <button className="primary" disabled={!words.length || words.length > 1000 || !lesson.title.trim()} onClick={start}>開始</button>}
       {phase === "reading" && <button className="primary" onClick={finish}>読了・WPMを表示</button>}
-      {phase === "done" && <button onClick={resetReading}>再読・教材の変更</button>}
+      {phase === "done" && <button onClick={prepareReread}>再読・教材の変更</button>}
     </section>
     <p className="fr-hint">辞書・メモ・別画面を見ている時間も計測に含みます。「読了」後もメモは続けられます。</p>
-    {result && <section className="fr-result" role="status"><strong>{result.wpm} <small>WPM</small></strong><span>辞書・メモ利用を含む読解速度 ／ 辞書 {result.used}回（本文語数の{(result.used / result.words * 100).toFixed(1)}%）</span>
-      {previous ? <p>同じ本文・同じ制限での前回：{previous.wpm} WPM → 今回 {result.wpm} WPM（{result.wpm-previous.wpm >= 0 ? "+" : ""}{result.wpm-previous.wpm}）</p> : <p>同じ本文・同じ辞書制限で再読すると前回と比較できます。</p>}
-    </section>}
     <div className="fr-layout-controls">
       <label className="fr-ratio">画面の比率　本文 {ratio}：メモ {100-ratio}<input aria-label="本文とメモの比率" type="range" min="40" max="75" step="5" value={ratio} onChange={e => setRatio(Number(e.target.value))} /></label>
       <button className="fr-swap-layout" aria-pressed={notesLeft} aria-controls="reading-workspace" onClick={() => { setNotesLeft(value => !value); setSelected(null); }}>本文とメモを左右入れ替え</button>
       <span role="status">{notesLeft ? "左：メモ ／ 右：本文" : "左：本文 ／ 右：メモ"}</span>
     </div>
     <div id="reading-workspace" className={`fr-workspace${notesLeft ? " fr-notes-left" : ""}`} style={{ gridTemplateColumns: notesLeft ? `minmax(0, ${100-ratio}fr) minmax(0, ${ratio}fr)` : `minmax(0, ${ratio}fr) minmax(0, ${100-ratio}fr)` }}>
-      <section className="fr-reading"><header><h2>{lesson.title || "教材"}</h2><span>{teacher ? "教師用プレビュー" : phase === "done" ? "復習 — 解説を自由に確認できます" : "単語をタップして確認"}</span></header>
-        <article className="fr-text" lang="en" onScroll={() => setSelected(null)}>{textParts}{lesson.text.slice(last)}</article>
+      <section className="fr-reading" ref={readingPanelRef} aria-label="読解本文">
+        <header className="fr-reading-header">
+          <div className="fr-title-row"><h2>{lesson.title || "教材"}</h2>
+            {phase === "ready" ? <button className="fr-reading-action primary" disabled={!words.length || words.length > 1000 || !lesson.title.trim()} onClick={start}>開始</button>
+              : <span className={`fr-phase fr-phase-${phase}`}>{phase === "reading" ? "計測中" : "読了"}</span>}
+          </div>
+          <div className="fr-reading-status"><span>{teacher ? "教師用プレビュー" : phase === "ready" ? "開始すると単語の解説を確認できます" : phase === "done" ? "復習：解説を自由に確認できます" : "単語をタップして確認"}</span>
+            <span>経過 <b>{time(seconds)}</b> ／ 辞書 <b>{phase === "done" ? "制限なし" : `残り${Math.max(0, limit - used.length)}語`}</b></span>
+          </div>
+        </header>
+        <article className="fr-text" ref={passageRef} onScroll={() => setSelected(null)}>
+          <div className="fr-passage" lang="en">{textParts}{lesson.text.slice(last)}</div>
+          <footer className="fr-passage-end" aria-label="本文末尾の操作">
+            {phase === "ready" && <p>本文を読み終えたら、ここで「読了」を押してください。</p>}
+            {phase === "reading" && <><p>おつかれさまでした。読了を押すと計測が止まります。</p><button className="fr-reading-action primary" onClick={finish}>読了・WPMを表示</button></>}
+            {result && <>
+              <div className="fr-end-result" role="status"><strong>{result.wpm} <small>WPM</small></strong><span>{time(result.seconds)} ／ 辞書 {result.used}語</span>
+                {previous && <p>同じ本文・同じ制限での前回：{previous.wpm} WPM → 今回 {result.wpm} WPM</p>}
+              </div>
+              <p>黄色マーカーを付けた本文を、単語帳用の画像として保存できます。</p>
+              <div className="fr-end-actions"><button className="fr-reading-action primary" disabled={exporting} onClick={() => void exportImage()}>{exporting ? "画像を作成中…" : "マーカー付き本文を画像保存（PNG）"}</button><button className="fr-reading-action" onClick={prepareReread}>もう一度読む</button></div>
+              {exportMessage && <p role="alert">{exportMessage}</p>}
+            </>}
+          </footer>
+        </article>
         {token && <aside className="fr-gloss" style={popup} aria-label="単語の解説">
           <button className="fr-close" onClick={() => setSelected(null)} aria-label="解説を閉じる">×</button>
           <h3>{token.word}</h3>
@@ -272,7 +310,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     </section>
     <section className="fr-review"><h2>あとで確認・タップした単語</h2>
       {marked.length === 0 && tapped.length === 0 ? <p>気になる単語に印をつけると、ここに並びます。</p> :
-        <div className="fr-actions">{words.filter(w => marked.includes(w.index) || tapped.includes(w.index)).map(w => <button key={w.index} onClick={() => { choose(w.index); document.querySelector(".fr-reading")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>{marked.includes(w.index) ? "☆ " : ""}{w.word} <small>#{w.index+1}</small></button>)}</div>}
+        <div className="fr-actions">{words.filter(w => marked.includes(w.index) || tapped.includes(w.index)).map(w => <button key={w.index} onClick={() => { const target = passageRef.current?.querySelector<HTMLElement>(`[data-word-index="${w.index}"]`); target?.scrollIntoView({ block: "center", behavior: "instant" }); requestAnimationFrame(() => choose(w.index)); }}>{marked.includes(w.index) ? "☆ " : ""}{w.word} <small>#{w.index+1}</small></button>)}</div>}
     </section>
     <details className="fr-history"><summary>読書記録（この端末・最大100件）</summary>
       <div className="fr-actions"><button onClick={() => downloadJson(records, "reading-history.json")}>履歴を書き出す</button><button disabled={phase === "reading" || !records.length} onClick={() => { if (confirm("この端末の自由読解の履歴を消去しますか？")) { setRecords([]); save("wpm-free-history", []); } }}>履歴を消去</button></div>
