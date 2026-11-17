@@ -2,15 +2,13 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Home from "./App";
 import QRCode from "qrcode";
 import { allowance, downloadJson, lookupKey, measuredWpm, tokenize, validateLesson } from "./lesson";
-import { createShareUrl, decodeLesson, payloadFromHash } from "./share";
-import { createSrcShareUrl, fetchLesson, srcFromSearch, SRC_PARAM } from "./sharesrc";
+import { createShareUrl } from "./share";
+import { createSrcShareUrl } from "./sharesrc";
 import type { Gloss, ReadingLesson, ReadingRecord } from "./lesson";
 const NotesBoard = memo(Home);
 
 import { SAMPLE } from "./sampleLesson";
-function storedLesson(): ReadingLesson {
-  try { return validateLesson(JSON.parse(localStorage.getItem("wpm-free-lesson") || "")); } catch { return SAMPLE; }
-}
+
 function storedRecords(): ReadingRecord[] {
   try {
     const data: unknown = JSON.parse(localStorage.getItem("wpm-free-history") || "[]");
@@ -19,8 +17,7 @@ function storedRecords(): ReadingRecord[] {
 }
 const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 
-export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void }) {
-  const [lesson, setLesson] = useState(storedLesson);
+export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (busy: boolean) => void; lesson: ReadingLesson; setLesson: (lesson: ReadingLesson) => void }) {
   const [records, setRecords] = useState(storedRecords);
   const [phase, setPhase] = useState<"ready" | "reading" | "done">("ready");
   const [percent, setPercent] = useState(10);
@@ -55,23 +52,8 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
     try { localStorage.setItem(key, JSON.stringify(value)); setSaveError(""); }
     catch { setSaveError("端末に保存できませんでした。必要な教材・履歴はファイルで保存してください。"); }
   }
-  useEffect(() => { save("wpm-free-lesson", lesson); }, [lesson]);
+
   useEffect(() => { setShareUrl(""); setQrUrl(""); setShareMessage(""); }, [lesson]);
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      const payload = payloadFromHash(location.hash);
-      if (payload === null) return;
-      history.replaceState(null, "", `${location.pathname}${location.search}`);
-      decodeLesson(payload).then(next => {
-        if (cancelled) return;
-        setLesson(next); resetReading(); setTeacher(false); setMessage("共有された教材を読み込みました。");
-      }).catch(e => { if (!cancelled) setMessage(e instanceof Error ? e.message : "共有リンクを読み込めませんでした。"); });
-    };
-    load();
-    window.addEventListener("hashchange", load);
-    return () => { cancelled = true; window.removeEventListener("hashchange", load); };
-  }, []);
   async function makePublicShare() {
     setPubMessage(""); setPubUrl(""); setPubQr("");
     try {
@@ -82,20 +64,6 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
       catch { setPubMessage("共有URLを作成しました。下の欄からコピーしてください。"); }
     } catch (e) { setPubMessage(e instanceof Error ? e.message : "共有URLを作成できませんでした。"); }
   }
-  useEffect(() => {
-    const name = srcFromSearch(location.search);
-    if (name === null) return;
-    let cancelled = false;
-    const params = new URLSearchParams(location.search);
-    params.delete(SRC_PARAM);
-    const rest = params.toString();
-    history.replaceState(null, "", `${location.pathname}${rest ? `?${rest}` : ""}${location.hash}`);
-    fetchLesson(name, location.href).then(next => {
-      if (cancelled) return;
-      setLesson(next); resetReading(); setTeacher(false); setMessage("公開された教材を読み込みました。");
-    }).catch(e => { if (!cancelled) setMessage(e instanceof Error ? e.message : "公開された教材を読み込めませんでした。"); });
-    return () => { cancelled = true; };
-  }, []);
   async function makeShare() {
     setShareMessage(""); setShareUrl(""); setQrUrl("");
     try {
@@ -137,13 +105,6 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
   function replaceLesson(next: ReadingLesson) {
     if (!confirm("教材を切り替えます。手書きメモは共通のノートとして残ります。必要なら先に画像保存してください。")) return;
     setLesson(next); resetReading(); setMessage("教材を読み込みました。"); setTeacher(false);
-  }
-  async function importFile(file?: File) {
-    if (!file) return;
-    try {
-      if (file.size > 2_000_000) throw new Error("教材ファイルは2MB以下にしてください。");
-      replaceLesson(validateLesson(JSON.parse(await file.text())));
-    } catch (e) { setMessage(e instanceof Error ? e.message : "教材を読み込めませんでした。"); }
   }
   function start() {
     if (!words.length || words.length > 1000 || startRef.current !== null) return;
@@ -205,7 +166,6 @@ export default function FreeReader({ onBusy }: { onBusy: (busy: boolean) => void
       <summary>教材と設定 — {lesson.title}</summary>
       <fieldset disabled={phase !== "ready"}>
         <div className="fr-actions">
-          <label className="fr-file">教材をインポート<input type="file" accept=".json,application/json" onChange={e => { void importFile(e.target.files?.[0]); e.target.value = ""; }} /></label>
           <button onClick={() => replaceLesson(SAMPLE)}>サンプル教材</button>
           <button onClick={() => downloadJson(lesson, "reading-lesson.json")}>教材を書き出す</button>
           <button onClick={() => void makeShare()}>URL・QRで配布</button>

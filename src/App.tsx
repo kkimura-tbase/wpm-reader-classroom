@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
+import type { ReadingLesson } from "./lesson";
+import { changeLessonText } from "./sharedLesson";
 import { canDrawPointer, isStylusTouch } from "./canvasInput";
 
 const SAMPLE = `A small change in the way we read can make a big difference. When readers try to understand every single word, they often lose the main idea. Skilled readers move forward at a steady pace. They notice key words, connect ideas, and adjust their speed when the text becomes difficult.\n\nReading faster does not mean rushing. It means using your attention wisely. Start with a comfortable goal, follow the highlighted words, and keep moving. After reading, pause and write the most important idea in your own words. This short reflection helps turn speed into real understanding.`;
@@ -55,7 +57,7 @@ async function encodeLesson(lesson: LessonPackage) {
   return `j.${bytesToBase64Url(source)}`;
 }
 
-async function decodeLesson(token: string): Promise<LessonPackage> {
+export async function decodeLesson(token: string): Promise<LessonPackage> {
   const [format, encoded] = token.split(".", 2);
   if (!encoded || !["g", "j"].includes(format)) throw new Error("共有リンクの形式が正しくありません。");
   let bytes = base64UrlToBytes(encoded);
@@ -80,10 +82,19 @@ const formatTime = (seconds: number) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-export default function Home({ notesOnly = false }: { notesOnly?: boolean }) {
+export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy, initialWpm }: {
+  notesOnly?: boolean; lesson?: ReadingLesson; onLessonChange?: (lesson: ReadingLesson) => void;
+  onBusy?: (busy: boolean) => void; initialWpm?: number;
+}) {
   const drawingKey = notesOnly ? "wpm-free-drawing" : "wpm-reader-drawing";
   const [tab, setTab] = useState<Tab>(notesOnly ? "notes" : "setup");
-  const [text, setText] = useState(SAMPLE);
+  const [localText, setLocalText] = useState(SAMPLE);
+  const text = lesson?.text ?? localText;
+  function setText(next: string) {
+    if (!lesson || !onLessonChange) { setLocalText(next); return; }
+    if (next !== lesson.text && lesson.glosses.length && !confirm("本文を編集すると、両モードで使う教材の解説がすべて解除されます。続けますか？")) return;
+    onLessonChange(changeLessonText(lesson, next));
+  }
   const [wpm, setWpm] = useState(160);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -94,7 +105,7 @@ export default function Home({ notesOnly = false }: { notesOnly?: boolean }) {
   const [voiceURI, setVoiceURI] = useState("");
   const [speechRate, setSpeechRate] = useState(1);
   const [sourceMode, setSourceMode] = useState<SourceMode>("paste");
-  const [sharedLesson, setSharedLesson] = useState<LessonPackage | null>(null);
+
   const [shareMessage, setShareMessage] = useState("");
   const [shareUrl, setShareUrl] = useState("");
   const [shareBusy, setShareBusy] = useState(false);
@@ -102,7 +113,12 @@ export default function Home({ notesOnly = false }: { notesOnly?: boolean }) {
   const [qrError, setQrError] = useState("");
   const [qrOpen, setQrOpen] = useState(false);
   const [teacherOpen, setTeacherOpen] = useState(false);
-  const [teacherTitle, setTeacherTitle] = useState("");
+  const [localTitle, setLocalTitle] = useState("");
+  const teacherTitle = lesson?.title ?? localTitle;
+  const setTeacherTitle = (title: string) => {
+    if (lesson && onLessonChange) onLessonChange({ ...lesson, title });
+    else setLocalTitle(title);
+  };
   const [hydrated, setHydrated] = useState(false);
   const [penColor, setPenColor] = useState<string>(COLORS[0].value);
   const [penSize, setPenSize] = useState(4);
@@ -158,21 +174,13 @@ export default function Home({ notesOnly = false }: { notesOnly?: boolean }) {
   useEffect(() => {
     try {
       const saved = notesOnly ? {} : JSON.parse(localStorage.getItem("wpm-reader-v1") || "{}");
-      if (typeof saved.text === "string") setText(saved.text);
+      if (!lesson && typeof saved.text === "string") setLocalText(saved.text);
       if (typeof saved.wpm === "number") setWpm(saved.wpm);
       if (typeof saved.voiceURI === "string") setVoiceURI(saved.voiceURI);
       if (typeof saved.speechRate === "number") setSpeechRate(saved.speechRate);
       if (saved.inputMode === "stylus" || saved.inputMode === "all") setInputMode(saved.inputMode);
     } catch { /* use defaults */ }
-    const token = !notesOnly && window.location.hash.match(/^#lesson=(.+)$/)?.[1];
-    if (token) {
-      decodeLesson(token).then(lesson => {
-        const lessonWords = lesson.text.trim().split(/\s+/).filter(Boolean).length;
-        if (lesson.text.length > MAX_TEXT_CHARS || lessonWords > MAX_WORDS) throw new Error("共有教材が上限を超えています。");
-        setSharedLesson(lesson); setTeacherTitle(lesson.title); setText(lesson.text); setWpm(lesson.wpm); setSourceMode("shared");
-        setShareMessage("共有教材を読み込みました。");
-      }).catch(error => { setSourceMode("shared"); setShareMessage(error instanceof Error ? error.message : "共有教材を開けませんでした。"); });
-    }
+    if (initialWpm !== undefined) setWpm(initialWpm);
     setSpeechSupported("speechSynthesis" in window);
     setHydrated(true);
   }, []);
@@ -181,6 +189,12 @@ export default function Home({ notesOnly = false }: { notesOnly?: boolean }) {
     if (!hydrated || notesOnly) return;
     localStorage.setItem("wpm-reader-v1", JSON.stringify({ text, wpm, voiceURI, speechRate, inputMode }));
   }, [text, wpm, voiceURI, speechRate, inputMode, hydrated]);
+
+  useEffect(() => {
+    if (notesOnly || !onBusy) return;
+    onBusy(playing);
+    return () => onBusy(false);
+  }, [playing, notesOnly, onBusy]);
 
   useEffect(() => {
     if (!qrOpen) return;
@@ -653,7 +667,7 @@ export default function Home({ notesOnly = false }: { notesOnly?: boolean }) {
     ctx.drawImage(canvas, 0, 0);
     const anchor = document.createElement("a"); anchor.href=exportCanvas.toDataURL("image/png"); anchor.download="reading-note.png"; anchor.click();
   };
-  const resetAll = () => { if (!confirm("教材・設定・メモをすべてリセットしますか？")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem(drawingKey); history.replaceState(null,"",`${location.pathname}${location.search}`); setText(SAMPLE); setWpm(160); setSharedLesson(null); setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
+  const resetAll = () => { if (!confirm("教材・設定・メモをすべてリセットしますか？")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem(drawingKey); history.replaceState(null,"",`${location.pathname}${location.search}`); if (onLessonChange) onLessonChange({ version: 1, title: "サンプル教材", text: SAMPLE, glosses: [] }); else setLocalText(SAMPLE); setWpm(160);  setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
 
   return <main className={notesOnly ? "embedded-notes" : undefined}>
     <header className="topbar">
@@ -670,10 +684,10 @@ export default function Home({ notesOnly = false }: { notesOnly?: boolean }) {
       <div className="source-tabs" role="tablist" aria-label="教材の選び方"><button className={sourceMode==="paste"?"active":""} onClick={()=>setSourceMode("paste")}>自分で貼り付け</button><button className={sourceMode==="shared"?"active":""} onClick={()=>setSourceMode("shared")}>共有教材</button></div>
       {sourceMode === "paste" ? <>
         <label className="field-label" htmlFor="material">教材本文 <span>ENGLISH TEXT</span></label>
-        <textarea id="material" className="material" value={text} onChange={e=>{setText(e.target.value);restart();setSharedLesson(null);setShareUrl("");setQrDataUrl("");setQrOpen(false);}} maxLength={MAX_TEXT_CHARS} spellCheck={false}/>
+        <textarea id="material" className="material" value={text} onChange={e=>{setText(e.target.value);restart();setShareUrl("");setQrDataUrl("");setQrOpen(false);}} maxLength={MAX_TEXT_CHARS} spellCheck={false}/>
         <small className="text-limit">{words.length.toLocaleString()} / {MAX_WORDS.toLocaleString()}語　·　{text.length.toLocaleString()} / {MAX_TEXT_CHARS.toLocaleString()}文字</small>
       </> : <div className="class-library shared-library">
-        {sharedLesson ? <div className="shared-material-card"><span><strong>{sharedLesson.title}</strong><small>{sharedLesson.text.trim().split(/\s+/).length.toLocaleString()} words　·　推奨 {sharedLesson.wpm} WPM</small></span><b>読み込み済み</b></div> : <div className="shared-empty"><strong>共有リンクから教材を受け取れます</strong><p>先生から届いたリンクを開くと、教材とWPMが自動的に読み込まれます。</p></div>}
+        {lesson ? <div className="shared-material-card"><span><strong>{lesson.title}</strong><small>{words.length.toLocaleString()} words　·　自由読解と共通の教材</small></span><b>読み込み済み</b></div> : <div className="shared-empty"><strong>共有リンクから教材を受け取れます</strong><p>先生から届いたリンクを開くと、教材とWPMが自動的に読み込まれます。</p></div>}
         {shareMessage && <p className="library-message">{shareMessage}</p>}
       </div>}
       <div className="teacher-area"><button className="teacher-toggle" onClick={()=>setTeacherOpen(v=>!v)}>先生用：この教材の共有リンクを作成 {teacherOpen?"−":"＋"}</button>{teacherOpen&&<div className="teacher-form"><label>教材名<input value={teacherTitle} onChange={e=>{setTeacherTitle(e.target.value);setShareUrl("");setQrDataUrl("")}} placeholder="例：Lesson 3 Reading" maxLength={80}/></label><button className="primary" onClick={createShareLink} disabled={shareBusy||!text.trim()}>{shareBusy?"作成中…":"リンク・QRを作成"}</button>{shareUrl&&<><label className="share-result">共有リンク<input value={shareUrl} readOnly onFocus={e=>e.currentTarget.select()}/></label><button className="show-qr" onClick={()=>setQrOpen(true)}>QRコードを大きく表示</button></>}<p>教材本文はサーバーへ保存されません。リンクを知っている人は教材を開けます。上限は{MAX_WORDS.toLocaleString()}語・{MAX_TEXT_CHARS.toLocaleString()}文字です。</p>{shareMessage&&<p className="share-message">{shareMessage}</p>}</div>}</div>
