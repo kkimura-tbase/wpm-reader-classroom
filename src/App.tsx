@@ -703,7 +703,7 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
       <div className="setup-heading"><div><h1>ペース読解</h1></div><div className="count-card"><strong>{words.length}</strong><span>語</span><small>約 {formatTime(totalSeconds)}</small></div></div>
       <div className="settings-row">
         <div className="pace-speed"><label className="field-label" htmlFor="pace-speed">目標スピード（WPM）</label>
-          <input id="pace-speed" className="wpm-slider" type="range" min="40" max="500" step="1" value={wpm} aria-valuetext={wpm + " WPM"} onChange={e=>{setWpm(Number(e.target.value));setShareUrl("");setQrDataUrl("")}}/>
+          <input id="pace-speed" className="wpm-slider" type="range" min="40" max="500" step="10" value={wpm} onChange={e=>{setWpm(Number(e.target.value));setShareUrl("");setQrDataUrl("")}}/>
           <div className="fr-slider-labels" aria-hidden="true">{[40,100,200,300,400,500].map(value=><span key={value} style={{left:((value-40)*100/460)+"%"}}>{value}</span>)}</div>
         </div>
         <label className="number-box"><span>細かく指定</span><div><input aria-label="目標WPM" type="number" min="40" max="500" value={wpm} onChange={e=>{setWpm(Math.min(500,Math.max(40,Number(e.target.value))));setShareUrl("");setQrDataUrl("")}}/><b>WPM</b></div></label>
