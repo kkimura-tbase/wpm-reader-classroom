@@ -20,7 +20,7 @@ const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.flo
 export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (busy: boolean) => void; lesson: ReadingLesson; setLesson: (lesson: ReadingLesson) => void }) {
   const [records, setRecords] = useState(storedRecords);
   const [phase, setPhase] = useState<"ready" | "reading" | "done">("ready");
-  const [percent, setPercent] = useState(10);
+  const [percent, setPercent] = useState(5);
   const [used, setUsed] = useState<string[]>([]);
   const [marked, setMarked] = useState<number[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -198,9 +198,12 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
             setLesson({ ...lesson, text: e.target.value, glosses: [] }); setSelected(null);
           }} />
         </details>
-        <label>辞書の上限：{percent / 10}割（{percent}%）・{limit}回
-          <input aria-label="辞書利用の上限" type="range" min="0" max="100" step="10" value={percent} onChange={e => setPercent(Number(e.target.value))} />
+        <label>調べられる単語数：{limit}語まで（本文の{percent}%）
+          <select className="fr-lookup-limit" aria-label="辞書利用の上限" value={percent} onChange={e => setPercent(Number(e.target.value))}>
+            {[0, 1, 2, 3, 5, 10, 15, 20].map(value => <option key={value} value={value}>{value === 0 ? "0% — 調べずに読む" : `${value}% — ${allowance(words.length, value)}語まで`}</option>)}
+          </select>
         </label>
+        {percent > 0 && limit === 0 && <p>この本文の長さでは上限が0語になります。調べたい場合は、より高い割合を選んでください。</p>}
         <p>{words.length}語 ／ 解説 {lesson.glosses.length}件。上限は小数点以下切り捨て。同じ綴りの再確認は無料（大文字・小文字は区別しません）。</p>
         {!lesson.glosses.length && <p>本文のみの教材です。WPM計測・手書きメモを利用できます。</p>}
         <p>教師用プレビューは確認用です。ログインによるアクセス制限ではありません。</p>
@@ -210,7 +213,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     {saveError && <p className="fr-message" role="alert">{saveError}</p>}
     <section className="fr-session" aria-label="計測と辞書残数">
       <div><small>経過時間</small><strong>{time(seconds)}</strong></div>
-      <div><small>辞書 残り</small><strong>{phase === "done" ? "制限なし" : `${Math.max(0, limit - used.length)} / ${limit}`}</strong></div>
+      <div><small>調べられる単語 残り</small><strong>{phase === "done" ? "制限なし" : `${Math.max(0, limit - used.length)} / ${limit}語`}</strong></div>
       <div><small>本文</small><strong>{words.length}語</strong></div>
       {phase === "ready" && <button className="primary" disabled={!words.length || words.length > 1000 || !lesson.title.trim()} onClick={start}>開始</button>}
       {phase === "reading" && <button className="primary" onClick={finish}>読了・WPMを表示</button>}
