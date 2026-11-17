@@ -31,6 +31,10 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [ratio, setRatio] = useState(60);
+  const [notesLeft, setNotesLeft] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("wpm-free-notes-left") || "false") === true; }
+    catch { return false; }
+  });
   const [popup, setPopup] = useState({ top: 80, left: 20, maxHeight: 320 });
   const [shareUrl, setShareUrl] = useState("");
   const [qrUrl, setQrUrl] = useState("");
@@ -54,6 +58,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   }
 
   useEffect(() => { setShareUrl(""); setQrUrl(""); setShareMessage(""); }, [lesson]);
+  useEffect(() => { save("wpm-free-notes-left", notesLeft); }, [notesLeft]);
   async function makePublicShare() {
     setPubMessage(""); setPubUrl(""); setPubQr("");
     try {
@@ -223,8 +228,12 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     {result && <section className="fr-result" role="status"><strong>{result.wpm} <small>WPM</small></strong><span>辞書・メモ利用を含む読解速度 ／ 辞書 {result.used}回（本文語数の{(result.used / result.words * 100).toFixed(1)}%）</span>
       {previous ? <p>同じ本文・同じ制限での前回：{previous.wpm} WPM → 今回 {result.wpm} WPM（{result.wpm-previous.wpm >= 0 ? "+" : ""}{result.wpm-previous.wpm}）</p> : <p>同じ本文・同じ辞書制限で再読すると前回と比較できます。</p>}
     </section>}
-    <label className="fr-ratio">画面の比率　本文 {ratio}：メモ {100-ratio}<input aria-label="本文とメモの比率" type="range" min="40" max="75" step="5" value={ratio} onChange={e => setRatio(Number(e.target.value))} /></label>
-    <div className="fr-workspace" style={{ gridTemplateColumns: `minmax(0, ${ratio}fr) minmax(0, ${100-ratio}fr)` }}>
+    <div className="fr-layout-controls">
+      <label className="fr-ratio">画面の比率　本文 {ratio}：メモ {100-ratio}<input aria-label="本文とメモの比率" type="range" min="40" max="75" step="5" value={ratio} onChange={e => setRatio(Number(e.target.value))} /></label>
+      <button className="fr-swap-layout" aria-pressed={notesLeft} aria-controls="reading-workspace" onClick={() => { setNotesLeft(value => !value); setSelected(null); }}>本文とメモを左右入れ替え</button>
+      <span role="status">{notesLeft ? "左：メモ ／ 右：本文" : "左：本文 ／ 右：メモ"}</span>
+    </div>
+    <div id="reading-workspace" className={`fr-workspace${notesLeft ? " fr-notes-left" : ""}`} style={{ gridTemplateColumns: notesLeft ? `minmax(0, ${100-ratio}fr) minmax(0, ${ratio}fr)` : `minmax(0, ${ratio}fr) minmax(0, ${100-ratio}fr)` }}>
       <section className="fr-reading"><header><h2>{lesson.title || "教材"}</h2><span>{teacher ? "教師用プレビュー" : phase === "done" ? "復習 — 解説を自由に確認できます" : "単語をタップして確認"}</span></header>
         <article className="fr-text" lang="en" onScroll={() => setSelected(null)}>{textParts}{lesson.text.slice(last)}</article>
         {token && <aside className="fr-gloss" style={popup} aria-label="単語の解説">
