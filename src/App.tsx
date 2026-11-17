@@ -691,10 +691,12 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
 
   return <main className={notesOnly ? "embedded-notes" : undefined}>
     <header className="topbar">
-      <nav aria-label="画面切り替え">
-        {([ ["setup","教材"], ["reader","読解"], ["notes","メモ"] ] as [Tab,string][]).map(([key,label])=><button key={key} className={tab===key?"active":""} aria-current={tab===key?"page":undefined} onClick={()=>setTab(key)}>{label}</button>)}
-      </nav>
-      <button className="reset-link" onClick={resetAll}>リセット</button>
+      <div className="topbar-inner">
+        <nav aria-label="画面切り替え">
+          {([ ["setup","教材"], ["reader","読解"], ["notes","メモ"] ] as [Tab,string][]).map(([key,label])=><button key={key} className={tab===key?"active":""} aria-current={tab===key?"page":undefined} onClick={()=>setTab(key)}>{label}</button>)}
+        </nav>
+        <button className="reset-link" onClick={resetAll}>リセット</button>
+      </div>
     </header>
 
     {tab === "setup" && <section className="setup shell">

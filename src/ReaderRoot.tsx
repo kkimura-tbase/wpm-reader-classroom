@@ -65,12 +65,18 @@ export default function ReaderRoot() {
   }
 
   return <>
-    <div className="mode-bar" role="group" aria-label="読解モード">
-      <strong>WPM READER</strong>
-      <button aria-pressed={mode === "free"} disabled={busy || loading} onClick={() => { if (mode === "pace") setPaceWpm(undefined); setMode("free"); }}>自由読解</button>
-      <button aria-pressed={mode === "pace"} disabled={busy || loading} onClick={() => setMode("pace")}>ペース読解</button>
-      {busy && <small>計測中</small>}
-    </div>
+    <header className="mode-bar">
+      <div className="mode-bar-inner">
+        <div className="mode-brand">
+          <strong>Reading Studio</strong>
+          {busy && <small role="status">計測中</small>}
+        </div>
+        <div className="mode-switch" role="group" aria-label="読解モード">
+          <button type="button" aria-pressed={mode === "free"} disabled={busy || loading} onClick={() => { if (mode === "pace") setPaceWpm(undefined); setMode("free"); }}>自由読解</button>
+          <button type="button" aria-pressed={mode === "pace"} disabled={busy || loading} onClick={() => setMode("pace")}>ペース読解</button>
+        </div>
+      </div>
+    </header>
     <section className="shared-material" aria-label="共通の教材">
       <div><strong>{lesson?.title || "教材未読み込み"}</strong></div>
       <label className={`fr-file fr-file-button${busy || loading ? " is-disabled" : ""}`}>＋ 教材ファイルを開く<input className="visually-hidden" type="file" accept=".json,application/json" disabled={busy || loading} onChange={e => { void importFile(e.target.files?.[0]); e.target.value = ""; }} /></label>
