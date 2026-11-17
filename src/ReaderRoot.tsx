@@ -58,7 +58,7 @@ export default function ReaderRoot() {
     try {
       if (file.size > 2_000_000) throw new Error("教材ファイルは2MB以下にしてください。");
       const next = validateLesson(JSON.parse(await file.text()));
-      if (!confirm("教材を切り替えます。手書きメモは残ります。必要なら先に画像保存してください。")) return;
+      if (lesson && !confirm("教材を切り替えます。手書きメモは残ります。必要なら先に画像保存してください。")) return;
       setLesson(next); setPaceWpm(undefined); setRevision(n => n + 1);
       setMessage("教材を読み込みました。どちらの読解モードでも使えます。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "教材を読み込めませんでした。"); }
@@ -73,13 +73,13 @@ export default function ReaderRoot() {
       {busy && <small>モードの変更は計測を止めてからできます</small>}
     </div>
     <section className="shared-material" aria-label="共通の教材">
-      <div><strong>{lesson.title || "教材"}</strong><p>同じ教材を自由読解・ペース読解で使えます。</p></div>
+      <div><strong>{lesson?.title || "教材未読み込み"}</strong><p>同じ教材を自由読解・ペース読解で使えます。</p></div>
       <label className="fr-file">教材ファイルを開く<input type="file" accept=".json,application/json" disabled={busy || loading} onChange={e => { void importFile(e.target.files?.[0]); e.target.value = ""; }} /></label>
       {loading && <p role="status">教材を読み込み中…</p>}
       {message && <p role="status">{message}</p>}
       {saveError && <p role="alert">{saveError}</p>}
     </section>
-    {mode === "pace" ? <Home key={revision} lesson={lesson} onLessonChange={setLesson} onBusy={setBusy} initialWpm={paceWpm} />
+    {!lesson ? <main className="fr-empty"><h1>教材が読み込まれていません</h1><p>上の「教材ファイルを開く」から、配布された教材JSONを選んでください。</p><p>一度読み込むと、自由読解・ペース読解のどちらでも使えます。</p></main> : mode === "pace" ? <Home key={revision} lesson={lesson} onLessonChange={setLesson} onBusy={setBusy} initialWpm={paceWpm} />
       : <FreeReader key={revision} lesson={lesson} setLesson={setLesson} onBusy={setBusy} />}
   </>;
 }

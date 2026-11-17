@@ -4,7 +4,6 @@ import type { ReadingLesson } from "./lesson";
 import { changeLessonText } from "./sharedLesson";
 import { canDrawPointer, isStylusTouch } from "./canvasInput";
 
-const SAMPLE = `A small change in the way we read can make a big difference. When readers try to understand every single word, they often lose the main idea. Skilled readers move forward at a steady pace. They notice key words, connect ideas, and adjust their speed when the text becomes difficult.\n\nReading faster does not mean rushing. It means using your attention wisely. Start with a comfortable goal, follow the highlighted words, and keep moving. After reading, pause and write the most important idea in your own words. This short reflection helps turn speed into real understanding.`;
 const WPM_PRESETS = [80, 100, 120, 140, 160, 200, 250, 300];
 const COLORS = [
   { value: "#17212b", label: "黒" },
@@ -88,7 +87,7 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
 }) {
   const drawingKey = notesOnly ? "wpm-free-drawing" : "wpm-reader-drawing";
   const [tab, setTab] = useState<Tab>(notesOnly ? "notes" : "setup");
-  const [localText, setLocalText] = useState(SAMPLE);
+  const [localText, setLocalText] = useState("");
   const text = lesson?.text ?? localText;
   function setText(next: string) {
     if (!lesson || !onLessonChange) { setLocalText(next); return; }
@@ -667,7 +666,7 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
     ctx.drawImage(canvas, 0, 0);
     const anchor = document.createElement("a"); anchor.href=exportCanvas.toDataURL("image/png"); anchor.download="reading-note.png"; anchor.click();
   };
-  const resetAll = () => { if (!confirm("教材・設定・メモをすべてリセットしますか？")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem(drawingKey); history.replaceState(null,"",`${location.pathname}${location.search}`); if (onLessonChange) onLessonChange({ version: 1, title: "サンプル教材", text: SAMPLE, glosses: [] }); else setLocalText(SAMPLE); setWpm(160);  setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
+  const resetAll = () => { if (!confirm("設定と手書きメモをリセットしますか？読み込んだ教材は残ります。")) return; localStorage.removeItem("wpm-reader-v1"); localStorage.removeItem(drawingKey); history.replaceState(null,"",`${location.pathname}${location.search}`); setWpm(160);  setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false); setSourceMode("paste"); setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE); setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1); setUndoStack([]); setRedoStack([]); canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restart(); restoreCanvas(null); setTab("setup"); };
 
   return <main className={notesOnly ? "embedded-notes" : undefined}>
     <header className="topbar">

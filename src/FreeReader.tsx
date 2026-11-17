@@ -1,14 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import Home from "./App";
-import QRCode from "qrcode";
 import { downloadMarkedLesson } from "./markedImage";
-import { allowance, downloadJson, lookupKey, measuredWpm, tokenize, validateLesson } from "./lesson";
-import { createShareUrl } from "./share";
-import { createSrcShareUrl } from "./sharesrc";
-import type { Gloss, ReadingLesson, ReadingRecord } from "./lesson";
+import { allowance, downloadJson, lookupKey, measuredWpm, tokenize } from "./lesson";
+import type { ReadingLesson, ReadingRecord } from "./lesson";
 const NotesBoard = memo(Home);
 
-import { SAMPLE } from "./sampleLesson";
 
 function storedRecords(): ReadingRecord[] {
   try {
@@ -22,7 +18,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   const [records, setRecords] = useState(storedRecords);
   const [phase, setPhase] = useState<"ready" | "reading" | "done">("ready");
   const [percent, setPercent] = useState(5);
-  const [used, setUsed] = useState<string[]>([]);
+  const [lookedAt, setLookedAt] = useState<number[]>([]);
   const [marked, setMarked] = useState<number[]>([]);
   const [tapped, setTapped] = useState<number[]>([]);
   const [exporting, setExporting] = useState(false);
@@ -30,11 +26,9 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   const [selected, setSelected] = useState<number | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [result, setResult] = useState<ReadingRecord | null>(null);
-  const [teacher, setTeacher] = useState(false);
   const [setupOpen, setSetupOpen] = useState(true);
   const readingPanelRef = useRef<HTMLElement>(null);
   const passageRef = useRef<HTMLElement>(null);
-  const [draft, setDraft] = useState<Gloss | null>(null);
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [ratio, setRatio] = useState(60);
@@ -43,20 +37,14 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     catch { return false; }
   });
   const [popup, setPopup] = useState({ top: 80, left: 20, maxHeight: 320 });
-  const [shareUrl, setShareUrl] = useState("");
-  const [qrUrl, setQrUrl] = useState("");
-  const [shareMessage, setShareMessage] = useState("");
-  const [pubName, setPubName] = useState("");
-  const [pubUrl, setPubUrl] = useState("");
-  const [pubQr, setPubQr] = useState("");
-  const [pubMessage, setPubMessage] = useState("");
   const startRef = useRef<number | null>(null);
   const words = useMemo(() => tokenize(lesson.text), [lesson.text]);
   const glosses = useMemo(() => new Map(lesson.glosses.map(g => [g.index, g])), [lesson.glosses]);
+  const used = useMemo(() => [...new Set(lookedAt.flatMap(index => words[index] ? [lookupKey(words[index].word)] : []))], [lookedAt, words]);
   const limit = allowance(words.length, percent);
   const token = selected === null ? undefined : words[selected];
   const gloss = selected === null ? undefined : glosses.get(selected);
-  const canSee = teacher || phase === "done" || (phase === "reading" && !!token && used.includes(lookupKey(token.word)));
+  const canSee = phase === "done" || (phase === "reading" && !!token && used.includes(lookupKey(token.word)));
   const previous = result ? records.find(r => r.id !== result.id && r.text === result.text && r.percent === result.percent) : undefined;
 
   function save(key: string, value: unknown) {
@@ -64,28 +52,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     catch { setSaveError("端末に保存できませんでした。必要な教材・履歴はファイルで保存してください。"); }
   }
 
-  useEffect(() => { setShareUrl(""); setQrUrl(""); setShareMessage(""); }, [lesson]);
   useEffect(() => { save("wpm-free-notes-left", notesLeft); }, [notesLeft]);
-  async function makePublicShare() {
-    setPubMessage(""); setPubUrl(""); setPubQr("");
-    try {
-      const url = createSrcShareUrl(pubName, location.href);
-      setPubUrl(url);
-      setPubQr(await QRCode.toDataURL(url, { errorCorrectionLevel: "L", width: 480, margin: 3, color: { dark: "#16212b", light: "#ffffff" } }));
-      try { await navigator.clipboard.writeText(url); setPubMessage("共有URLをコピーし、QRコードを表示しました。ファイルを公開（push・デプロイ）済みか確認してください。"); }
-      catch { setPubMessage("共有URLを作成しました。下の欄からコピーしてください。"); }
-    } catch (e) { setPubMessage(e instanceof Error ? e.message : "共有URLを作成できませんでした。"); }
-  }
-  async function makeShare() {
-    setShareMessage(""); setShareUrl(""); setQrUrl("");
-    try {
-      const url = await createShareUrl(lesson, location.href);
-      setShareUrl(url);
-      setQrUrl(await QRCode.toDataURL(url, { errorCorrectionLevel: "L", width: 480, margin: 3, color: { dark: "#16212b", light: "#ffffff" } }));
-      try { await navigator.clipboard.writeText(url); setShareMessage("共有URLをコピーし、QRコードを表示しました。"); }
-      catch { setShareMessage("共有URLを作成しました。下の欄からコピーしてください。"); }
-    } catch (e) { setShareMessage(e instanceof Error ? e.message : "共有URLを作成できませんでした。"); }
-  }
   useEffect(() => {
     onBusy(phase === "reading");
     return () => onBusy(false);
@@ -111,7 +78,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     };
   }, []);
 
-  useEffect(() => { setTapped([]); setExportMessage(""); }, [lesson.text]);
+  useEffect(() => { setTapped([]); setLookedAt([]); setMarked([]); setSelected(null); setExportMessage(""); }, [lesson.text]);
 
   async function exportImage() {
     setExporting(true); setExportMessage("");
@@ -132,15 +99,11 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   function resetReading() {
     setSetupOpen(true);
     setTapped([]); setExportMessage("");
-    setPhase("ready"); setUsed([]); setMarked([]); setSelected(null); setSeconds(0); setResult(null); startRef.current = null;
-  }
-  function replaceLesson(next: ReadingLesson) {
-    if (!confirm("教材を切り替えます。手書きメモは共通のノートとして残ります。必要なら先に画像保存してください。")) return;
-    setLesson(next); resetReading(); setMessage("教材を読み込みました。"); setTeacher(false);
+    setPhase("ready"); setLookedAt([]); setMarked([]); setSelected(null); setSeconds(0); setResult(null); startRef.current = null;
   }
   function start() {
     if (!words.length || words.length > 1000 || startRef.current !== null) return;
-    setTeacher(false); setSelected(null); setUsed([]); setMarked([]); setResult(null); setSeconds(0);
+    setSelected(null); setLookedAt([]); setMarked([]); setResult(null); setSeconds(0);
     startRef.current = performance.now(); setPhase("reading"); setMessage("");
     setSetupOpen(false); focusReading();
   }
@@ -154,7 +117,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     requestAnimationFrame(() => passageRef.current?.querySelector(".fr-passage-end")?.scrollIntoView({ block: "end", behavior: "instant" }));
   }
   function choose(index: number) {
-    if (!teacher) setTapped(old => old.includes(index) ? old : [...old, index]);
+    setTapped(old => old.includes(index) ? old : [...old, index]);
     if (selected === index) {
       setSelected(null);
       return;
@@ -173,18 +136,16 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     }
     setSelected(index);
     const w = words[index]; const g = glosses.get(index);
-    setDraft(g ? { ...g } : { index, word: w.word, lemma: w.word.toLowerCase(), pos: "", meaning: "", note: "" });
     if (phase === "reading" && g) {
       const key = lookupKey(w.word);
-      setUsed(old => old.includes(key) || old.length >= limit ? old : [...old, key]);
+      if (used.includes(key) || used.length < limit) setLookedAt(old => old.includes(index) ? old : [...old, index]);
     }
   }
-  function saveGloss() {
-    if (!draft) return;
-    try {
-      const next = validateLesson({ ...lesson, glosses: [...lesson.glosses.filter(g => g.index !== draft.index), draft].sort((a,b) => a.index-b.index) });
-      setLesson(next); setMessage("解説を保存しました。配布用の教材を書き出してください。");
-    } catch (e) { setMessage((e as Error).message); }
+  function undoTap(index: number) {
+    setTapped(old => old.filter(value => value !== index));
+    setLookedAt(old => old.filter(value => value !== index));
+    setMarked(old => old.filter(value => value !== index));
+    setSelected(null);
   }
   let last = 0;
   const textParts = words.map(w => {
@@ -201,39 +162,14 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
       <summary>読解の設定 <span className="fr-setup-summary">辞書 {percent}%・{limit}語まで</span></summary>
       <fieldset disabled={phase !== "ready"}>
         <label>調べられる単語数：{limit}語まで（本文の{percent}%）
-          <select className="fr-lookup-limit" aria-label="辞書利用の上限" value={percent} onChange={e => setPercent(Number(e.target.value))}>
-            {[0, 1, 2, 3, 5, 10, 15, 20].map(value => <option key={value} value={value}>{value === 0 ? "0% — 調べずに読む" : `${value}% — ${allowance(words.length, value)}語まで`}</option>)}
-          </select>
+          <input className="fr-lookup-slider" aria-label="辞書利用の上限" aria-valuetext={`本文の${percent}%・${limit}語まで`} type="range" min="0" max="7" step="1" value={[0, 1, 2, 3, 5, 10, 15, 20].indexOf(percent)} onChange={e => setPercent([0, 1, 2, 3, 5, 10, 15, 20][Number(e.target.value)])} />
+          <span className="fr-slider-labels" aria-hidden="true">{[0, 1, 2, 3, 5, 10, 15, 20].map(value => <span key={value}>{value}%</span>)}</span>
         </label>
         {percent > 0 && limit === 0 && <p>この本文の長さでは上限が0語になります。調べたい場合は、より高い割合を選んでください。</p>}
         <p>{words.length}語 ／ 解説 {lesson.glosses.length}件。上限は小数点以下切り捨て。同じ綴りの再確認は無料（大文字・小文字は区別しません）。</p>
         {!lesson.glosses.length && <p>本文のみの教材です。WPM計測・手書きメモを利用できます。</p>}
-        <details className="fr-teacher-tools"><summary>教師用ツール・教材の編集と配布</summary>
-        <div className="fr-actions">
-          <button onClick={() => replaceLesson(SAMPLE)}>サンプル教材</button>
-          <button onClick={() => downloadJson(lesson, "reading-lesson.json")}>教材を書き出す</button>
-          <button onClick={() => void makeShare()}>URL・QRで配布</button>
-          <button onClick={() => { setTeacher(!teacher); setSelected(null); }} aria-pressed={teacher}>教師用プレビュー・修正</button>
-        </div>
-        {shareMessage && <p className="fr-message" role="status">{shareMessage}</p>}
-        {shareUrl && <div className="fr-share">
-          <input readOnly aria-label="共有URL" value={shareUrl} onFocus={e => e.target.select()} />
-          {qrUrl && <img src={qrUrl} width={240} height={240} alt="教材共有用のQRコード" />}
-        </div>}
-        <details className="fr-public">
-          <summary>公開URLで共有（長い教材向け）</summary>
-          <p>教師の手順：①「教材を書き出す」でJSONを保存 → ②リポジトリの <code>public/lessons/</code> に置いて push（Pagesに自動公開） → ③下にファイル名（例：<code>foo.json</code>）を入力して共有URL・QRを作成。</p>
-          <p><strong>注意：</strong>公開リポジトリのため、置いた教材は誰でも閲覧できます。個人情報や非公開の教材は置かないでください。</p>
-          <div className="fr-actions">
-            <input aria-label="公開する教材のファイル名" placeholder="foo.json" maxLength={200} value={pubName} onChange={e => setPubName(e.target.value)} />
-            <button disabled={!pubName.trim()} onClick={() => void makePublicShare()}>共有URLとQRを作成</button>
-          </div>
-          {pubMessage && <p className="fr-message" role="status">{pubMessage}</p>}
-          {pubUrl && <div className="fr-share">
-            <input readOnly aria-label="公開URLの共有リンク" value={pubUrl} onFocus={e => e.target.select()} />
-            {pubQr && <img src={pubQr} width={240} height={240} alt="公開URL共有用のQRコード" />}
-          </div>}
-        </details>
+        <details className="fr-teacher-tools"><summary>教材の編集・保存</summary>
+          <div className="fr-actions"><button onClick={() => downloadJson(lesson, "reading-lesson.json")}>教材ファイルを保存</button></div>
         <label>教材名<input maxLength={80} value={lesson.title} onChange={e => setLesson({ ...lesson, title: e.target.value })} /></label>
         <details><summary>本文を貼り付ける（解説なし）</summary>
           <p>解説付き教材の本文を変更すると、位置のずれを防ぐため解説をすべて解除します。</p>
@@ -242,7 +178,6 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
             setLesson({ ...lesson, text: e.target.value, glosses: [] }); setSelected(null);
           }} />
         </details>
-        <p>教師用プレビューは確認用です。ログインによるアクセス制限ではありません。</p>
         </details>
       </fieldset>
     </details>
@@ -269,15 +204,17 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
             {phase === "ready" ? <button className="fr-reading-action primary" disabled={!words.length || words.length > 1000 || !lesson.title.trim()} onClick={start}>開始</button>
               : <span className={`fr-phase fr-phase-${phase}`}>{phase === "reading" ? "計測中" : "読了"}</span>}
           </div>
-          <div className="fr-reading-status"><span>{teacher ? "教師用プレビュー" : phase === "ready" ? "開始すると単語の解説を確認できます" : phase === "done" ? "復習：解説を自由に確認できます" : "単語をタップして確認"}</span>
+          <div className="fr-reading-status"><span>{phase === "ready" ? "開始すると単語の解説を確認できます" : phase === "done" ? "復習：解説を自由に確認できます" : "単語をタップして確認"}</span>
             <span>経過 <b>{time(seconds)}</b> ／ 辞書 <b>{phase === "done" ? "制限なし" : `残り${Math.max(0, limit - used.length)}語`}</b></span>
           </div>
         </header>
         <article className="fr-text" ref={passageRef} onScroll={() => setSelected(null)}>
           <div className="fr-passage" lang="en">{textParts}{lesson.text.slice(last)}</div>
           <footer className="fr-passage-end" aria-label="本文末尾の操作">
-            {phase === "ready" && <p>本文を読み終えたら、ここで「読了」を押してください。</p>}
-            {phase === "reading" && <><p>おつかれさまでした。読了を押すと計測が止まります。</p><button className="fr-reading-action primary" onClick={finish}>読了・WPMを表示</button></>}
+            {phase !== "done" && <>
+              <p>{phase === "ready" ? "まだ計測を開始していません。本文右上の「開始」を押してください。" : "読み終えたら、ここで計測を止められます。"}</p>
+              <button className="fr-reading-action primary" disabled={phase !== "reading"} onClick={finish}>読了・WPMを表示</button>
+            </>}
             {result && <>
               <div className="fr-end-result" role="status"><strong>{result.wpm} <small>WPM</small></strong><span>{time(result.seconds)} ／ 辞書 {result.used}語</span>
                 {previous && <p>同じ本文・同じ制限での前回：{previous.wpm} WPM → 今回 {result.wpm} WPM</p>}
@@ -293,11 +230,9 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
           <h3>{token.word}</h3>
           {canSee && gloss ? <><small>{gloss.lemma} · {gloss.pos}</small><p className="fr-meaning">{gloss.meaning}</p>{gloss.note && <p>{gloss.note}</p>}</> :
             <p>{!gloss ? "この単語の解説は未登録です。回数は消費しません。" : phase === "ready" ? "「開始」を押すと解説を確認できます。" : "辞書の上限に達しました。読了後に確認できます。"}</p>}
-          {!teacher && <button onClick={() => setMarked(old => old.includes(token.index) ? old.filter(i => i !== token.index) : [...old, token.index])}>{marked.includes(token.index) ? "あとで確認を解除" : "あとで確認に追加"}</button>}
-          {teacher && draft && <div className="fr-editor">
-            {(["lemma","pos","meaning","note"] as const).map((key, i) => <label key={key}>{["原形","品詞","意味","語句・文法の補足"][i]}<textarea value={draft[key] ?? ""} maxLength={key === "note" ? 2000 : 1000} onChange={e => setDraft({ ...draft, [key]: e.target.value })} /></label>)}
-            <button onClick={saveGloss}>この解説を保存</button>
-          </div>}
+          {<button onClick={() => setMarked(old => old.includes(token.index) ? old.filter(i => i !== token.index) : [...old, token.index])}>{marked.includes(token.index) ? "あとで確認を解除" : "あとで確認に追加"}</button>}
+          <button className="fr-undo-tap" onClick={() => undoTap(token.index)}>このタップを取り消す</button>
+          <p className="fr-undo-hint">マーカーを消します。計測中は、同じ綴りを他の箇所で調べていなければ残り語数も戻ります。</p>
         </aside>}
       </section>
       <section className="fr-notes"><h2>手書きメモ</h2><p>内容を自分の言葉や図でまとめよう</p><NotesBoard notesOnly /></section>
