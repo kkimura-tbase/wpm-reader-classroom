@@ -162,8 +162,10 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
       <summary>読解の設定 <span className="fr-setup-summary">辞書 {percent}%・{limit}語まで</span></summary>
       <fieldset disabled={phase !== "ready"}>
         <label>調べられる単語数：{limit}語まで（本文の{percent}%）
+          <span className="fr-slider-control">
           <input className="fr-lookup-slider" aria-label="辞書利用の上限" aria-valuetext={`本文の${percent}%・${limit}語まで`} type="range" min="0" max="7" step="1" value={[0, 1, 2, 3, 5, 10, 15, 20].indexOf(percent)} onChange={e => setPercent([0, 1, 2, 3, 5, 10, 15, 20][Number(e.target.value)])} />
-          <span className="fr-slider-labels" aria-hidden="true">{[0, 1, 2, 3, 5, 10, 15, 20].map(value => <span key={value}>{value}%</span>)}</span>
+          <span className="fr-slider-labels" aria-hidden="true">{[0, 1, 2, 3, 5, 10, 15, 20].map(value => <span key={value} style={{ left: `${[0, 1, 2, 3, 5, 10, 15, 20].indexOf(value) * 100 / 7}%` }}>{value}%</span>)}</span>
+          </span>
         </label>
         {percent > 0 && limit === 0 && <p>この本文の長さでは上限が0語になります。調べたい場合は、より高い割合を選んでください。</p>}
         <p>{words.length}語 ／ 解説 {lesson.glosses.length}件。上限は小数点以下切り捨て。同じ綴りの再確認は無料（大文字・小文字は区別しません）。</p>
@@ -230,9 +232,8 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
           <h3>{token.word}</h3>
           {canSee && gloss ? <><small>{gloss.lemma} · {gloss.pos}</small><p className="fr-meaning">{gloss.meaning}</p>{gloss.note && <p>{gloss.note}</p>}</> :
             <p>{!gloss ? "この単語の解説は未登録です。回数は消費しません。" : phase === "ready" ? "「開始」を押すと解説を確認できます。" : "辞書の上限に達しました。読了後に確認できます。"}</p>}
-          {<button onClick={() => setMarked(old => old.includes(token.index) ? old.filter(i => i !== token.index) : [...old, token.index])}>{marked.includes(token.index) ? "あとで確認を解除" : "あとで確認に追加"}</button>}
-          <button className="fr-undo-tap" onClick={() => undoTap(token.index)}>このタップを取り消す</button>
-          <p className="fr-undo-hint">マーカーを消します。計測中は、同じ綴りを他の箇所で調べていなければ残り語数も戻ります。</p>
+          <div className="fr-gloss-actions"><button onClick={() => setMarked(old => old.includes(token.index) ? old.filter(i => i !== token.index) : [...old, token.index])}>{marked.includes(token.index) ? "あとで確認を解除" : "あとで確認に追加"}</button>
+          <button className="fr-undo-tap" onClick={() => undoTap(token.index)}>このタップを取り消す</button></div>
         </aside>}
       </section>
       <section className="fr-notes"><h2>手書きメモ</h2><p>内容を自分の言葉や図でまとめよう</p><NotesBoard notesOnly /></section>
