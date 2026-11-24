@@ -292,3 +292,9 @@
 }
 .notes-overlay .notes .toolrow { position: static; flex-shrink: 0; }
 .notes-overlay .notes .canvas-wrap { flex: 1; height: auto; min-height: 0; }
+.fr-title-row {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.fr-title-row h2 { flex: 1 1 9ch; }
+.fr-title-row > :is(.fr-reading-action, .fr-phase) { margin-inline-start: auto; }

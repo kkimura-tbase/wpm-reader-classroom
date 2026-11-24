@@ -4,7 +4,7 @@ import type { NotesControls } from "./NotesBoard";
 import { downloadMarkedLesson } from "./markedImage";
 import { allowance, downloadJson, lookupKey, measuredWpm, tokenize } from "./lesson";
 import type { ReadingLesson, ReadingRecord } from "./lesson";
-import { clearReadingSession, loadReadingSession, LOOKUP_LIMITS, saveReadingSession } from "./readingSession";
+import { clearReadingSession, loadReadingSession, LOOKUP_LIMITS, MAX_READING_RATIO, MIN_READING_RATIO, saveReadingSession } from "./readingSession";
 
 const NotesBoard = memo(Board);
 const DEFAULT_RATIO = 50;
@@ -262,7 +262,19 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
     </details>
     {saveError && <p className="fr-message" role="alert">{saveError}</p>}
     <div className="fr-layout-controls">
-      <label className="fr-ratio">本文 {ratio}：メモ {100-ratio}<input aria-label="本文とメモの比率" type="range" min="40" max="75" step="5" value={ratio} onChange={e => setRatio(Number(e.target.value))} /></label>
+      <label className="fr-ratio">
+        本文 {ratio}：メモ {100 - ratio}
+        <input
+          aria-label="本文とメモの比率"
+          aria-valuetext={`本文 ${ratio}%、メモ ${100 - ratio}%`}
+          type="range"
+          min={MIN_READING_RATIO}
+          max={MAX_READING_RATIO}
+          step={5}
+          value={ratio}
+          onChange={e => setRatio(Number(e.target.value))}
+        />
+      </label>
       <button className="fr-swap-layout" aria-pressed={notesLeft} aria-controls="reading-workspace" onClick={() => { setNotesLeft(value => !value); setSelected(null); }}>⇄ 左右を入れ替え</button>
     </div>
     <div id="reading-workspace" className={`fr-workspace${notesLeft ? " fr-notes-left" : ""}`} style={{ gridTemplateColumns: notesLeft ? `minmax(0, ${100-ratio}fr) minmax(0, ${ratio}fr)` : `minmax(0, ${ratio}fr) minmax(0, ${100-ratio}fr)` }}>

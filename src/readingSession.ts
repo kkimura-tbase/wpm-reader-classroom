@@ -1,4 +1,6 @@
 export const LOOKUP_LIMITS = [0, 1, 2, 3, 5, 10, 15, 20] as const;
+export const MIN_READING_RATIO = 25;
+export const MAX_READING_RATIO = 75;
 export type ReadingMode = "free" | "pace";
 export type PaceTab = "setup" | "reader" | "notes";
 
@@ -33,7 +35,8 @@ export function loadReadingSession<M extends ReadingMode>(mode: M, text: string)
     if (!saved || saved.text !== text || !nonNegative(saved.savedAt) || !nonNegative(saved.seconds) || !nonNegative(saved.pageTop)) return null;
     if (mode === "free") {
       if (!LOOKUP_LIMITS.some(value => value === saved.percent) || !indices(saved.tapped) || !indices(saved.lookedAt)
-        || !indices(saved.marked) || !nonNegative(saved.passageTop) || !nonNegative(saved.ratio) || saved.ratio < 40 || saved.ratio > 75) return null;
+        || !indices(saved.marked) || !nonNegative(saved.passageTop) || !nonNegative(saved.ratio)
+        || saved.ratio < MIN_READING_RATIO || saved.ratio > MAX_READING_RATIO) return null;
     } else if (!nonNegative(saved.position) || !nonNegative(saved.wpm) || saved.wpm < 40 || saved.wpm > 500
       || !["setup", "reader", "notes"].includes(saved.tab) || typeof saved.speechOn !== "boolean") return null;
     return saved;
