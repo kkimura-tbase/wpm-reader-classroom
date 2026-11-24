@@ -5,10 +5,11 @@ import { validateLesson } from "./lesson";
 import { LESSON_KEY, restoreLesson } from "./sharedLesson";
 import { decodeLesson, payloadFromHash } from "./share";
 import { fetchLesson, srcFromSearch, SRC_PARAM } from "./sharesrc";
+import { clearReadingSession, latestReadingMode, loadReadingSession } from "./readingSession";
 
 export default function ReaderRoot() {
-  const [mode, setMode] = useState<"pace" | "free">("free");
   const [lesson, setLesson] = useState(() => restoreLesson(localStorage));
+  const [mode, setMode] = useState(() => lesson ? latestReadingMode(lesson.text) : "free");
   const [paceWpm, setPaceWpm] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -37,6 +38,8 @@ export default function ReaderRoot() {
         const next = legacy ? validateLesson({ version: 1, title: legacy.title || "共有教材", text: legacy.text, glosses: [] })
           : payload !== null ? await decodeLesson(payload) : await fetchLesson(src!, location.href);
         if (cancelled || id !== request) return;
+        clearReadingSession("free");
+        clearReadingSession("pace");
         setMode("free"); setLesson(next); setPaceWpm(legacy?.wpm); setRevision(n => n + 1);
         setMessage("");
         const url = new URL(location.href);
@@ -57,7 +60,12 @@ export default function ReaderRoot() {
     try {
       if (file.size > 2_000_000) throw new Error("教材ファイルは2MB以下にしてください。");
       const next = validateLesson(JSON.parse(await file.text()));
-      if (lesson && !confirm("教材を切り替えます。手書きメモは残ります。必要なら先に画像保存してください。")) return;
+      const hasProgress = lesson && (loadReadingSession("free", lesson.text) || loadReadingSession("pace", lesson.text));
+      if (lesson && !confirm(hasProgress
+        ? "教材を切り替えると、中断した読解は終了します。手書きメモは残ります。"
+        : "教材を切り替えます。手書きメモは残ります。")) return;
+      clearReadingSession("free");
+      clearReadingSession("pace");
       setLesson(next); setPaceWpm(undefined); setRevision(n => n + 1);
       setMessage("");
     } catch (error) { setMessage(error instanceof Error ? error.message : "教材を読み込めませんでした。"); }

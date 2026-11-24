@@ -1,40 +1,16 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { Ref } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import type { ReadingLesson } from "./lesson";
 import { changeLessonText } from "./sharedLesson";
-import { canDrawPointer, isStylusTouch } from "./canvasInput";
+import NotesBoard from "./NotesBoard";
+import type { NotesControls } from "./NotesBoard";
+import { clearReadingSession, loadReadingSession, saveReadingSession } from "./readingSession";
+import type { PaceTab } from "./readingSession";
 
-export type NotesControls = { reset: () => void };
-const COLORS = [
-  { value: "#17212b", label: "黒" },
-  { value: "#3157d5", label: "青" },
-  { value: "#d84f45", label: "赤" },
-  { value: "#2d8a62", label: "緑" },
-  { value: "#7c4dcc", label: "紫" },
-  { value: "#e47a28", label: "オレンジ" },
-  { value: "#a8742a", label: "茶" },
-  { value: "#6f7b84", label: "グレー" },
-] as const;
-const MAX_ERASER_SIZE = 48;
-const MIN_CANVAS_ZOOM = 0.6;
-const MAX_CANVAS_ZOOM = 3;
-const CANVAS_ZOOM_STEP = 0.25;
 const MAX_WORDS = 1000;
 const MAX_TEXT_CHARS = 12000;
-const clampCanvasZoom = (value: number) => Math.min(MAX_CANVAS_ZOOM, Math.max(MIN_CANVAS_ZOOM, value));
-type Tab = "setup" | "reader" | "notes";
-type DrawingInputMode = "stylus" | "all";
 type LessonPackage = { v: 1; title: string; text: string; wpm: number };
-type CanvasPoint = { x: number; y: number };
-type CanvasSnapshot = Promise<string>;
-type CanvasPinch = {
-  distance: number;
-  zoom: number;
-  contentX: number;
-  contentY: number;
-};
-
+type PaceProgress = { position: number; seconds: number };
 const bytesToBase64Url = (bytes: Uint8Array) => {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -81,24 +57,30 @@ const formatTime = (seconds: number) => {
   return `${m}:${String(s).padStart(2, "0")}`;
 };
 
-export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy, initialWpm, notesRef }: {
-  notesOnly?: boolean; lesson?: ReadingLesson; onLessonChange?: (lesson: ReadingLesson) => void;
-  onBusy?: (busy: boolean) => void; initialWpm?: number; notesRef?: Ref<NotesControls>;
+export default function Home({ lesson, onLessonChange, onBusy, initialWpm }: {
+  lesson?: ReadingLesson; onLessonChange?: (lesson: ReadingLesson) => void;
+  onBusy?: (busy: boolean) => void; initialWpm?: number;
 }) {
-  const drawingKey = notesOnly ? "wpm-free-drawing" : "wpm-reader-drawing";
-  const [tab, setTab] = useState<Tab>(notesOnly ? "notes" : "setup");
+  const [restored] = useState(() => lesson ? loadReadingSession("pace", lesson.text) : null);
+  const [tab, setTab] = useState<PaceTab>(restored?.tab ?? "setup");
   const [localText, setLocalText] = useState("");
   const text = lesson?.text ?? localText;
   function setText(next: string) {
     if (!lesson || !onLessonChange) { setLocalText(next); return; }
     if (next !== lesson.text && lesson.glosses.length && !confirm("本文を編集すると、両モードで使う教材の解説がすべて解除されます。続けますか？")) return;
+    if (next === lesson.text) return;
+    restart();
+    clearReadingSession("free");
     onLessonChange(changeLessonText(lesson, next));
   }
-  const [wpm, setWpm] = useState(160);
-  const [index, setIndex] = useState(0);
+  const [wpm, setWpm] = useState(restored?.wpm ?? 160);
+  const [index, setIndex] = useState(Math.floor(restored?.position ?? 0));
   const [playing, setPlaying] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const [speechOn, setSpeechOn] = useState(false);
+  const [started, setStarted] = useState(!!restored);
+  const [elapsed, setElapsed] = useState(restored?.seconds ?? 0);
+  const [savingPause, setSavingPause] = useState(false);
+  const [pauseMessage, setPauseMessage] = useState("");
+  const [speechOn, setSpeechOn] = useState(restored?.speechOn ?? false);
   const [speechSupported, setSpeechSupported] = useState(true);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voiceURI, setVoiceURI] = useState("");
@@ -118,37 +100,14 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
     else setLocalTitle(title);
   };
   const [hydrated, setHydrated] = useState(false);
-  const [penColor, setPenColor] = useState<string>(COLORS[0].value);
-  const [penSize, setPenSize] = useState(4);
-  const [eraserSize, setEraserSize] = useState(MAX_ERASER_SIZE);
-  const [eraser, setEraser] = useState(false);
-  const [inputMode, setInputMode] = useState<DrawingInputMode>("stylus");
-  const [panMode, setPanMode] = useState(false);
-  const [canvasZoom, setCanvasZoom] = useState(1);
-  const [undoStack, setUndoStack] = useState<CanvasSnapshot[]>([]);
-  const [redoStack, setRedoStack] = useState<CanvasSnapshot[]>([]);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const canvasWrapRef = useRef<HTMLDivElement>(null);
-  const canvasStageRef = useRef<HTMLDivElement>(null);
-  const canvasBaseSizeRef = useRef({ width: 0, height: 0 });
-  const canvasZoomRef = useRef(1);
-  const pinchRef = useRef<CanvasPinch | null>(null);
-  const drawingRef = useRef(false);
-  const drawingPointerRef = useRef<number | null>(null);
-  const scrollPointerRef = useRef<number | null>(null);
-  const scrollLastXRef = useRef(0);
-  const scrollLastYRef = useRef(0);
-  const stylusTouchRef = useRef<number | null>(null);
-  const lastRef = useRef<CanvasPoint>({ x: 0, y: 0 });
-  const drawingStyleRef = useRef<{ eraser: boolean; size: number; color: string }>({ eraser: false, size: 4, color: COLORS[0].value });
-  const canvasSaveGenerationRef = useRef(0);
-  const canvasRestoreGenerationRef = useRef(0);
-  const committedSnapshotRef = useRef<CanvasSnapshot>(Promise.resolve(""));
-  const historyBusyRef = useRef(false);
+  const notesRef = useRef<NotesControls>(null);
   const speechStartedRef = useRef(false);
   const speechSessionRef = useRef(0);
   const speechTimersRef = useRef<Set<number>>(new Set());
   const playingRef = useRef(false);
+  const startedRef = useRef(!!restored);
+  const paceProgress = useRef<PaceProgress>({ position: restored?.position ?? 0, seconds: restored?.seconds ?? 0 });
+  const paceClock = useRef<{ at: number; base: PaceProgress; wpm: number; speech: boolean } | null>(null);
 
   const words = useMemo(() => text.trim() ? text.trim().split(/\s+/) : [], [text]);
   const readingParagraphs = useMemo(() => {
@@ -169,31 +128,57 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
   const progress = words.length ? Math.min(100, (index / words.length) * 100) : 0;
   const totalSeconds = words.length / Math.max(wpm, 1) * 60;
   const remaining = Math.max(0, (words.length - index) / Math.max(wpm, 1) * 60);
+  const usingSpeech = speechOn && speechSupported && voices.length > 0;
+
+  const sampleProgress = useCallback((): PaceProgress => {
+    const clock = paceClock.current;
+    if (!clock) return paceProgress.current;
+    const delta = (performance.now() - clock.at) / 1000;
+    return {
+      position: Math.min(words.length, clock.speech ? paceProgress.current.position : clock.base.position + delta * clock.wpm / 60),
+      seconds: clock.base.seconds + delta,
+    };
+  }, [words.length]);
+  const showProgress = useCallback((value: PaceProgress) => {
+    paceProgress.current = value;
+    setIndex(Math.floor(value.position));
+    setElapsed(value.seconds);
+  }, []);
+  const showSpokenPosition = useCallback((position: number) => {
+    paceProgress.current = { ...paceProgress.current, position };
+    setIndex(position);
+  }, []);
 
   useEffect(() => {
     try {
-      const saved = notesOnly ? {} : JSON.parse(localStorage.getItem("wpm-reader-v1") || "{}");
+      const saved = JSON.parse(localStorage.getItem("wpm-reader-v1") || "{}");
       if (!lesson && typeof saved.text === "string") setLocalText(saved.text);
-      if (typeof saved.wpm === "number") setWpm(saved.wpm);
+      if (!restored && Number.isFinite(saved.wpm)) setWpm(Math.min(500, Math.max(40, saved.wpm)));
       if (typeof saved.voiceURI === "string") setVoiceURI(saved.voiceURI);
       if (typeof saved.speechRate === "number") setSpeechRate(saved.speechRate);
-      if (saved.inputMode === "stylus" || saved.inputMode === "all") setInputMode(saved.inputMode);
     } catch { /* use defaults */ }
-    if (initialWpm !== undefined) setWpm(initialWpm);
+    if (!restored && initialWpm !== undefined) setWpm(initialWpm);
     setSpeechSupported("speechSynthesis" in window);
     setHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!hydrated || notesOnly) return;
-    localStorage.setItem("wpm-reader-v1", JSON.stringify({ text, wpm, voiceURI, speechRate, inputMode }));
-  }, [text, wpm, voiceURI, speechRate, inputMode, hydrated]);
+    if (!hydrated) return;
+    try { localStorage.setItem("wpm-reader-v1", JSON.stringify({ text, wpm, voiceURI, speechRate })); }
+    catch { /* Saving progress reports its own storage errors. */ }
+  }, [text, wpm, voiceURI, speechRate, hydrated]);
 
   useEffect(() => {
-    if (notesOnly || !onBusy) return;
-    onBusy(playing);
+    if (!onBusy) return;
+    onBusy(playing || savingPause);
     return () => onBusy(false);
-  }, [playing, notesOnly, onBusy]);
+  }, [playing, savingPause, onBusy]);
+
+  useEffect(() => {
+    if (!restored) return;
+    const frame = requestAnimationFrame(() => window.scrollTo({ top: restored.pageTop, behavior: "instant" }));
+    return () => cancelAnimationFrame(frame);
+  }, [restored]);
 
   useEffect(() => {
     if (!qrOpen) return;
@@ -227,6 +212,19 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
 
   useEffect(() => () => { playingRef.current = false; stopSpeech(); }, [stopSpeech]);
 
+  const completeReading = useCallback(() => {
+    const final = sampleProgress();
+    paceClock.current = null;
+    startedRef.current = false;
+    playingRef.current = false;
+    stopSpeech();
+    showProgress({ ...final, position: words.length });
+    setStarted(false);
+    setPlaying(false);
+    setTab("notes");
+    clearReadingSession("pace");
+  }, [sampleProgress, showProgress, stopSpeech, words.length]);
+
   const speakFrom = useCallback((from: number) => {
     if (!speechOn || !speechSupported || !words.length || !voices.length) return;
     stopSpeech();
@@ -237,7 +235,8 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
     const speakSentence = (startIndex: number) => {
       if (session !== speechSessionRef.current || !playingRef.current) return;
       if (startIndex >= words.length) {
-        setIndex(words.length); setPlaying(false); playingRef.current = false; setTab("notes"); speechStartedRef.current = false; return;
+        completeReading();
+        return;
       }
       let endIndex = startIndex;
       while (endIndex < words.length && endIndex - startIndex < 45) {
@@ -253,7 +252,7 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
       const smoothFallback = window.setInterval(() => {
         if (boundarySeen || session !== speechSessionRef.current) return;
         const delta = (performance.now() - sentenceStarted) / 1000;
-        setIndex(Math.min(endIndex, startIndex + Math.floor(delta * wpm / 60)));
+        showSpokenPosition(Math.min(endIndex, startIndex + Math.floor(delta * wpm / 60)));
       }, 80);
       speechTimersRef.current.add(smoothFallback);
       utter.onboundary = event => {
@@ -261,48 +260,113 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
         boundarySeen = true;
         const before = sentence.slice(0, event.charIndex).trim();
         const offset = before ? before.split(/\s+/).length : 0;
-        setIndex(Math.min(endIndex, startIndex + offset + 1));
+        showSpokenPosition(Math.min(endIndex, startIndex + offset + 1));
       };
       utter.onend = () => {
         window.clearInterval(smoothFallback);
         speechTimersRef.current.delete(smoothFallback);
         if (session !== speechSessionRef.current) return;
-        setIndex(endIndex); speakSentence(endIndex);
+        showSpokenPosition(endIndex); speakSentence(endIndex);
       };
-      utter.onerror = () => { window.clearInterval(smoothFallback); speechTimersRef.current.delete(smoothFallback); if (session === speechSessionRef.current) { setPlaying(false); playingRef.current = false; speechStartedRef.current = false; } };
+      utter.onerror = () => {
+        window.clearInterval(smoothFallback);
+        speechTimersRef.current.delete(smoothFallback);
+        if (session !== speechSessionRef.current) return;
+        const current = sampleProgress();
+        // If a selected voice fails, keep advancing by the configured speed.
+        paceClock.current = { at: performance.now(), base: current, wpm, speech: false };
+        speechStartedRef.current = false;
+      };
       window.speechSynthesis.speak(utter);
     };
     speakSentence(from);
-  }, [speechOn, speechSupported, words, voices, voiceURI, wpm, speechRate, stopSpeech]);
+  }, [speechOn, speechSupported, words, voices, voiceURI, wpm, speechRate, stopSpeech, showSpokenPosition, sampleProgress, completeReading]);
 
   useEffect(() => {
     if (!playing || !words.length) return;
-    const interval = 60000 / wpm;
-    const started = performance.now();
-    const baseIndex = index;
-    const baseElapsed = elapsed;
-    if (speechOn && !speechStartedRef.current) speakFrom(index);
+    if (usingSpeech !== paceClock.current?.speech) {
+      paceClock.current = { at: performance.now(), base: sampleProgress(), wpm, speech: usingSpeech };
+    }
+    if (usingSpeech && !speechStartedRef.current) speakFrom(Math.floor(paceProgress.current.position));
     const timer = window.setInterval(() => {
-      const delta = (performance.now() - started) / 1000;
-      setElapsed(baseElapsed + delta);
-      if (!speechOn) {
-        const next = Math.min(words.length, baseIndex + Math.floor(delta * wpm / 60));
-        setIndex(next);
-        if (next >= words.length) { setPlaying(false); playingRef.current = false; stopSpeech(); setTab("notes"); }
-      }
-    }, Math.min(100, interval / 2));
+      if (!paceClock.current) return;
+      const current = sampleProgress();
+      if (current.position >= words.length) completeReading();
+      else showProgress(current);
+    }, Math.min(100, 30000 / wpm));
     return () => window.clearInterval(timer);
-  }, [playing, wpm, words.length, speakFrom, speechOn, stopSpeech]); // intentional session snapshot
+  }, [playing, wpm, words.length, speakFrom, usingSpeech, sampleProgress, showProgress, completeReading]);
 
   const start = () => {
-    if (!words.length) return;
-    if (index >= words.length) { setIndex(0); setElapsed(0); }
-    playingRef.current = true; setTab("reader"); setPlaying(true);
+    if (!words.length || savingPause || playingRef.current) return;
+    if (paceProgress.current.position >= words.length) showProgress({ position: 0, seconds: 0 });
+    paceClock.current = { at: performance.now(), base: paceProgress.current, wpm, speech: usingSpeech };
+    startedRef.current = true;
+    playingRef.current = true;
+    setStarted(true);
+    setPauseMessage("");
+    setTab("reader");
+    setPlaying(true);
   };
-  const pause = () => { playingRef.current = false; setPlaying(false); stopSpeech(); };
-  const resume = () => { playingRef.current = true; setPlaying(true); };
-  const restart = () => { playingRef.current = false; stopSpeech(); setIndex(0); setElapsed(0); setPlaying(false); };
-  const rewind = () => { const n = Math.max(0, index - Math.round(wpm / 6)); const wasPlaying=playing; stopSpeech(); setIndex(n); setElapsed(n / wpm * 60); if (wasPlaying) { playingRef.current=true; setTimeout(()=>speakFrom(n),0); } };
+  const saveProgress = (targetTab: PaceTab, current = paceProgress.current) => {
+    return saveReadingSession("pace", text, {
+      ...current, wpm, tab: targetTab, pageTop: targetTab === tab ? window.scrollY : 0, speechOn,
+    });
+  };
+  const pause = async (targetTab: PaceTab = tab) => {
+    if (!playingRef.current) return;
+    const current = sampleProgress();
+    paceClock.current = null;
+    playingRef.current = false;
+    stopSpeech();
+    showProgress(current);
+    setPlaying(false);
+    setSavingPause(true);
+    const saved = saveProgress(targetTab, current);
+    const notesSaved = await notesRef.current?.checkpoint();
+    setSavingPause(false);
+    setPauseMessage(saved && notesSaved !== false ? "この端末に保存しました。" : "保存できない内容があります。この画面を開いたままにしてください。");
+  };
+  const openTab = (targetTab: PaceTab) => {
+    if (targetTab === "setup" && playingRef.current) void pause(targetTab);
+    else if (startedRef.current && !playingRef.current) saveProgress(targetTab);
+    setTab(targetTab);
+  };
+  const restart = () => {
+    playingRef.current = false;
+    startedRef.current = false;
+    paceClock.current = null;
+    stopSpeech();
+    showProgress({ position: 0, seconds: 0 });
+    setPlaying(false);
+    setStarted(false);
+    setPauseMessage("");
+    clearReadingSession("pace");
+  };
+  const rewind = () => {
+    const position = Math.max(0, Math.floor(sampleProgress().position) - Math.round(wpm / 6));
+    const next = { position, seconds: position / wpm * 60 };
+    stopSpeech();
+    showProgress(next);
+    if (playingRef.current) {
+      paceClock.current = { at: performance.now(), base: next, wpm, speech: usingSpeech };
+      if (usingSpeech) speakFrom(position);
+    } else if (startedRef.current) saveProgress(tab, next);
+  };
+
+  useEffect(() => {
+    function checkpoint() {
+      if (playingRef.current) void pause();
+      else if (startedRef.current) saveProgress(tab);
+    }
+    const onHide = () => { if (document.visibilityState === "hidden") checkpoint(); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", checkpoint);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", checkpoint);
+    };
+  }, [text, tab, wpm, speechOn, sampleProgress, showProgress, stopSpeech]);
 
   const createShareLink = async () => {
     const wordCount = words.length;
@@ -341,363 +405,27 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
     const anchor = document.createElement("a"); anchor.href = qrDataUrl; anchor.download = `${teacherTitle.trim() || "reading-lesson"}-qr.png`; anchor.click();
   };
 
-  const restoreCanvas = useCallback((data?: string | null) => {
-    const generation = ++canvasRestoreGenerationRef.current;
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext("2d"); if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!data) return;
-    const img = new Image(); img.onload = () => { if (generation === canvasRestoreGenerationRef.current) ctx.drawImage(img, 0, 0, canvas.width, img.height * canvas.width / img.width); }; img.src = data;
-  }, []);
-  const layoutCanvasAtZoom = useCallback((zoom: number) => {
-    const canvas = canvasRef.current, stage = canvasStageRef.current, wrap = canvasWrapRef.current;
-    const { width, height } = canvasBaseSizeRef.current;
-    if (!canvas || !stage || !wrap || !width || !height) return;
-    // Reserve the vertical scrollbar consistently. Paper length is independent
-    // of the viewport, so even at 100% there is room to scroll and keep writing.
-    wrap.style.overflowY = "scroll";
-    wrap.style.overflowX = zoom > 1 ? "auto" : "hidden";
-    const displayWidth = Math.round(width * zoom * 100) / 100;
-    const displayHeight = Math.round(height * zoom * 100) / 100;
-    canvas.style.width = `${displayWidth}px`; canvas.style.height = `${displayHeight}px`;
-    stage.style.width = `${displayWidth}px`; stage.style.height = `${displayHeight}px`;
-  }, []);
-  const applyCanvasZoom = useCallback((value: number) => {
-    const next = Math.round(clampCanvasZoom(value) * 100) / 100;
-    canvasZoomRef.current = next;
-    setCanvasZoom(current => current === next ? current : next);
-    layoutCanvasAtZoom(next);
-    return next;
-  }, [layoutCanvasAtZoom]);
-  const zoomCanvasTo = useCallback((value: number, clientX?: number, clientY?: number) => {
-    const wrap = canvasWrapRef.current; if (!wrap) return;
-    const rect = wrap.getBoundingClientRect();
-    const localX = clientX === undefined ? wrap.clientWidth / 2 : clientX - rect.left;
-    const localY = clientY === undefined ? wrap.clientHeight / 2 : clientY - rect.top;
-    const previous = canvasZoomRef.current;
-    const contentX = (wrap.scrollLeft + localX) / previous;
-    const contentY = (wrap.scrollTop + localY) / previous;
-    const next = applyCanvasZoom(value);
-    wrap.scrollLeft = contentX * next - localX;
-    wrap.scrollTop = contentY * next - localY;
-  }, [applyCanvasZoom]);
-  const resizeCanvas = useCallback(() => {
-    const canvas = canvasRef.current, wrap = canvasWrapRef.current; if (!canvas || !wrap) return;
-    if (drawingRef.current) return;
-    const rect = wrap.getBoundingClientRect();
-    const width = Math.max(0, Math.floor(rect.width - (wrap.offsetWidth - wrap.clientWidth)));
-    // A fixed paper aspect ratio preserves strokes when the panel width changes.
-    const height = width * 6;
-    canvasBaseSizeRef.current = { width, height };
-    layoutCanvasAtZoom(canvasZoomRef.current);
-    const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    const pixelWidth = Math.round(width * ratio), pixelHeight = Math.round(height * ratio);
-    if (!width || !height || (canvas.dataset.ready === "true" && canvas.width === pixelWidth && canvas.height === pixelHeight)) return;
-    const old = canvas.dataset.ready === "true" ? canvas.toDataURL() : localStorage.getItem(drawingKey);
-    canvas.width = pixelWidth; canvas.height = pixelHeight;
-    canvas.dataset.ready = "true";
-    committedSnapshotRef.current = Promise.resolve(old || "");
-    restoreCanvas(old);
-  }, [layoutCanvasAtZoom, restoreCanvas]);
-  useEffect(() => {
-    if (tab !== "notes") return;
-    const id = requestAnimationFrame(resizeCanvas);
-    const observer = new ResizeObserver(resizeCanvas);
-    if (canvasWrapRef.current) observer.observe(canvasWrapRef.current);
-    window.addEventListener("resize", resizeCanvas);
-    return () => {
-      cancelAnimationFrame(id);
-      observer.disconnect();
-      window.removeEventListener("resize", resizeCanvas);
-    };
-  }, [tab, resizeCanvas]);
-
-  const canvasSnapshot = (): CanvasSnapshot => new Promise(resolve => {
-    const canvas = canvasRef.current;
-    if (!canvas) { resolve(""); return; }
-    canvas.toBlob(blob => {
-      if (!blob) { resolve(canvas.toDataURL("image/png")); return; }
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : "");
-      reader.onerror = () => resolve("");
-      reader.readAsDataURL(blob);
-    }, "image/png");
-  });
-  const persistCanvas = (): CanvasSnapshot => {
-    const generation = ++canvasSaveGenerationRef.current;
-    const snapshot = canvasSnapshot();
-    void snapshot.then(shot => {
-      if (generation === canvasSaveGenerationRef.current && shot && !drawingRef.current) localStorage.setItem(drawingKey, shot);
-    });
-    return snapshot;
-  };
-  const canvasPoint = (canvas: HTMLCanvasElement, clientX: number, clientY: number) => {
-    const rect = canvas.getBoundingClientRect();
-    return { x: (clientX-rect.left) * canvas.width/rect.width, y: (clientY-rect.top) * canvas.height/rect.height };
-  };
-  const drawCanvasPoints = (canvas: HTMLCanvasElement, points: CanvasPoint[]) => {
-    const drawablePoints: CanvasPoint[] = [];
-    let previous = lastRef.current;
-    for (const point of points) {
-      if (Math.hypot(point.x-previous.x, point.y-previous.y) <= 0.05) continue;
-      drawablePoints.push(point);
-      previous = point;
-    }
-    if (!drawablePoints.length) return;
-    const ctx = canvas.getContext("2d"); if (!ctx) return;
-    const style = drawingStyleRef.current;
-    ctx.beginPath(); ctx.moveTo(lastRef.current.x, lastRef.current.y);
-    for (const point of drawablePoints) ctx.lineTo(point.x, point.y);
-    const baseWidth = canvasBaseSizeRef.current.width || canvas.clientWidth;
-    ctx.lineCap="round"; ctx.lineJoin="round"; ctx.lineWidth=style.size*(canvas.width/baseWidth);
-    ctx.globalCompositeOperation = style.eraser ? "destination-out" : "source-over"; ctx.strokeStyle=style.color; ctx.stroke();
-    lastRef.current=drawablePoints.at(-1)!;
-  };
-  const drawContactPoint = (canvas: HTMLCanvasElement, point: CanvasPoint) => {
-    const ctx = canvas.getContext("2d"); if (!ctx) return;
-    const style = drawingStyleRef.current;
-    const baseWidth = canvasBaseSizeRef.current.width || canvas.clientWidth;
-    const radius = Math.max(1, style.size*(canvas.width/baseWidth)/2);
-    ctx.save();
-    ctx.globalCompositeOperation = style.eraser ? "destination-out" : "source-over";
-    ctx.fillStyle = style.color;
-    ctx.beginPath(); ctx.arc(point.x, point.y, radius, 0, Math.PI*2); ctx.fill();
-    ctx.restore();
-  };
-  const releaseCapturedPointer = (canvas: HTMLCanvasElement, pointerId: number) => {
-    try { if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId); }
-    catch { /* The browser may have already released this pointer. */ }
-  };
-  const beginPanningAt = (canvas: HTMLCanvasElement, pointerId: number, clientX: number, clientY: number, capturePointer = false) => {
-    if (drawingPointerRef.current !== null || scrollPointerRef.current !== null) return;
-    if (capturePointer) {
-      try { canvas.setPointerCapture(pointerId); }
-      catch { /* Direct hit testing can continue the pan. */ }
-    }
-    scrollPointerRef.current = pointerId;
-    scrollLastXRef.current = clientX; scrollLastYRef.current = clientY;
-  };
-  const movePanningAt = (clientX: number, clientY: number) => {
-    const wrap = canvasWrapRef.current; if (!wrap) return;
-    wrap.scrollLeft += scrollLastXRef.current - clientX;
-    wrap.scrollTop += scrollLastYRef.current - clientY;
-    scrollLastXRef.current = clientX; scrollLastYRef.current = clientY;
-  };
-  const beginDrawingAt = (canvas: HTMLCanvasElement, pointerId: number, clientX: number, clientY: number, capturePointer = false) => {
-    if (scrollPointerRef.current !== null) {
-      const scrollingPointer = scrollPointerRef.current;
-      scrollPointerRef.current = null;
-      releaseCapturedPointer(canvas, scrollingPointer);
-    }
-    const beforeStroke = committedSnapshotRef.current;
-    if (capturePointer) {
-      try { canvas.setPointerCapture(pointerId); }
-      catch { /* Implicit capture or normal hit testing can continue the stroke. */ }
-    }
-    drawingRef.current = true; drawingPointerRef.current = pointerId; lastRef.current = canvasPoint(canvas, clientX, clientY);
-    drawingStyleRef.current = { eraser, size: eraser ? eraserSize : penSize, color: penColor };
-    drawContactPoint(canvas, lastRef.current);
-    setUndoStack(s => [...s.slice(-19), beforeStroke]); setRedoStack([]);
-  };
-  const beginDrawing = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    beginDrawingAt(e.currentTarget, e.pointerId, e.clientX, e.clientY, true);
-  };
-  const finishDrawing = (canvas: HTMLCanvasElement, pointerId: number, endPoint?: CanvasPoint) => {
-    if (drawingPointerRef.current !== pointerId) return;
-    if (endPoint) drawCanvasPoints(canvas, [endPoint]);
-    drawingRef.current=false; drawingPointerRef.current=null;
-    committedSnapshotRef.current=persistCanvas(); requestAnimationFrame(resizeCanvas);
-  };
-  const drawStart = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (pinchRef.current) { e.preventDefault(); return; }
-    const looksLikePen = e.pointerType === "pen";
-    if (stylusTouchRef.current !== null && looksLikePen) return;
-    if (panMode || (inputMode === "stylus" && e.pointerType === "touch")) {
-      e.preventDefault();
-      beginPanningAt(e.currentTarget, e.pointerId, e.clientX, e.clientY, true);
-      return;
-    }
-    if (drawingPointerRef.current !== null) return;
-    if (!canDrawPointer(inputMode, e.pointerType)) return;
-    beginDrawing(e);
-  };
-  const drawMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (pinchRef.current) { e.preventDefault(); return; }
-    const looksLikePen = e.pointerType === "pen";
-    if (stylusTouchRef.current !== null && looksLikePen) { e.preventDefault(); return; }
-    let recoveredFromMove = false;
-    if (scrollPointerRef.current === e.pointerId) {
-      e.preventDefault();
-      movePanningAt(e.clientX, e.clientY);
-      return;
-    }
-    if (!drawingRef.current || drawingPointerRef.current !== e.pointerId) {
-      const pointerCanDraw = !panMode && canDrawPointer(inputMode, e.pointerType);
-      const pointerIsInContact = e.buttons !== 0 || e.pressure > 0;
-      if (drawingPointerRef.current === null && pointerCanDraw && pointerIsInContact) { beginDrawing(e); recoveredFromMove = true; }
-      else return;
-    }
-    e.preventDefault(); const canvas = e.currentTarget;
-    const coalescedEvents = e.nativeEvent.getCoalescedEvents?.();
-    const events = coalescedEvents?.length ? coalescedEvents : [e.nativeEvent];
-    if (recoveredFromMove && events.length) lastRef.current=canvasPoint(canvas, events[0].clientX, events[0].clientY);
-    drawCanvasPoints(canvas, events.slice(recoveredFromMove ? 1 : 0).map(event => canvasPoint(canvas, event.clientX, event.clientY)));
-  };
-  const drawEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (scrollPointerRef.current === e.pointerId) { scrollPointerRef.current=null; releaseCapturedPointer(e.currentTarget, e.pointerId); return; }
-    if (drawingPointerRef.current !== e.pointerId) return;
-    if (stylusTouchRef.current !== null && e.pointerType === "pen") { e.preventDefault(); return; }
-    e.preventDefault();
-    finishDrawing(e.currentTarget, e.pointerId, e.type === "pointerup" ? canvasPoint(e.currentTarget, e.clientX, e.clientY) : undefined);
-  };
-  useEffect(() => {
-    if (tab !== "notes") return;
-    const canvas = canvasRef.current; if (!canvas) return;
-    const wrap = canvasWrapRef.current; if (!wrap) return;
-    const isApplePencilTouch = (touch: Touch) => isStylusTouch(touch as Touch & { touchType?: string });
-    const fingerTouches = (touches: TouchList) => Array.from(touches).filter(touch => !isApplePencilTouch(touch));
-    const touchDistance = (first: Touch, second: Touch) => Math.hypot(second.clientX-first.clientX, second.clientY-first.clientY);
-    const touchCenter = (first: Touch, second: Touch) => ({ x:(first.clientX+second.clientX)/2, y:(first.clientY+second.clientY)/2 });
-    const touchPointerId = (identifier: number) => -(identifier+1);
-    const findActiveTouch = (touches: TouchList) => Array.from(touches).find(touch => touch.identifier === stylusTouchRef.current);
-    const handleStylusTouchStart = (event: TouchEvent) => {
-      const fingers = fingerTouches(event.touches);
-      if (inputMode === "stylus" && fingers.length >= 2) {
-        event.preventDefault();
-        if (scrollPointerRef.current !== null) {
-          releaseCapturedPointer(canvas, scrollPointerRef.current);
-          scrollPointerRef.current=null;
-        }
-        const center = touchCenter(fingers[0], fingers[1]);
-        const rect = wrap.getBoundingClientRect();
-        const localX = center.x-rect.left, localY = center.y-rect.top;
-        const zoom = canvasZoomRef.current;
-        pinchRef.current = {
-          distance:Math.max(1,touchDistance(fingers[0],fingers[1])), zoom,
-          contentX:(wrap.scrollLeft+localX)/zoom, contentY:(wrap.scrollTop+localY)/zoom,
-        };
-        return;
-      }
-      const touch = Array.from(event.changedTouches).find(isApplePencilTouch); if (!touch) return;
-      event.preventDefault();
-      stylusTouchRef.current=touch.identifier;
-      const pointerId = touchPointerId(touch.identifier);
-      if (panMode) beginPanningAt(canvas, pointerId, touch.clientX, touch.clientY);
-      else if (drawingPointerRef.current === null) beginDrawingAt(canvas, pointerId, touch.clientX, touch.clientY);
-    };
-    const handleStylusTouchMove = (event: TouchEvent) => {
-      if (pinchRef.current) {
-        const fingers = fingerTouches(event.touches); if (fingers.length < 2) return;
-        event.preventDefault();
-        const pinch = pinchRef.current;
-        const center = touchCenter(fingers[0],fingers[1]);
-        const rect = wrap.getBoundingClientRect();
-        const localX = center.x-rect.left, localY = center.y-rect.top;
-        const next = applyCanvasZoom(pinch.zoom*touchDistance(fingers[0],fingers[1])/pinch.distance);
-        wrap.scrollLeft=pinch.contentX*next-localX;
-        wrap.scrollTop=pinch.contentY*next-localY;
-        return;
-      }
-      if (stylusTouchRef.current === null) return;
-      const touch = findActiveTouch(event.touches) ?? findActiveTouch(event.changedTouches); if (!touch) return;
-      event.preventDefault();
-      const pointerId = touchPointerId(touch.identifier);
-      if (panMode) {
-        if (scrollPointerRef.current === null) beginPanningAt(canvas, pointerId, touch.clientX, touch.clientY);
-        if (scrollPointerRef.current === pointerId) movePanningAt(touch.clientX,touch.clientY);
-      } else {
-        if (drawingPointerRef.current === null) beginDrawingAt(canvas, pointerId, touch.clientX, touch.clientY);
-        drawCanvasPoints(canvas, [canvasPoint(canvas, touch.clientX, touch.clientY)]);
-      }
-    };
-    const handleStylusTouchEnd = (event: TouchEvent) => {
-      const touch = stylusTouchRef.current === null ? undefined : findActiveTouch(event.changedTouches);
-      if (touch) {
-        event.preventDefault();
-        const pointerId = touchPointerId(touch.identifier);
-        if (panMode) {
-          if (scrollPointerRef.current === pointerId) scrollPointerRef.current=null;
-        } else if (drawingPointerRef.current !== null) {
-          finishDrawing(canvas, drawingPointerRef.current, event.type === "touchend" ? canvasPoint(canvas, touch.clientX, touch.clientY) : undefined);
-        }
-        stylusTouchRef.current=null;
-      }
-      if (pinchRef.current && fingerTouches(event.touches).length < 2) {
-        event.preventDefault(); pinchRef.current=null;
-      }
-    };
-    canvas.addEventListener("touchstart", handleStylusTouchStart, { passive: false });
-    canvas.addEventListener("touchmove", handleStylusTouchMove, { passive: false });
-    canvas.addEventListener("touchend", handleStylusTouchEnd, { passive: false });
-    canvas.addEventListener("touchcancel", handleStylusTouchEnd, { passive: false });
-    return () => {
-      canvas.removeEventListener("touchstart", handleStylusTouchStart);
-      canvas.removeEventListener("touchmove", handleStylusTouchMove);
-      canvas.removeEventListener("touchend", handleStylusTouchEnd);
-      canvas.removeEventListener("touchcancel", handleStylusTouchEnd);
-      stylusTouchRef.current=null; pinchRef.current=null;
-      if (scrollPointerRef.current !== null && scrollPointerRef.current < 0) scrollPointerRef.current=null;
-    };
-  }, [tab, inputMode, panMode, eraser, eraserSize, penSize, penColor, applyCanvasZoom]);
-  const undo = async () => {
-    const prev=undoStack.at(-1); if (!prev || historyBusyRef.current) return;
-    historyBusyRef.current=true;
-    const generation = ++canvasSaveGenerationRef.current;
-    const current=committedSnapshotRef.current; setRedoStack(s=>[...s.slice(-19),current]); setUndoStack(s=>s.slice(0,-1));
-    try { const data=await prev; if (generation !== canvasSaveGenerationRef.current) return; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem(drawingKey,data); else localStorage.removeItem(drawingKey); }
-    finally { historyBusyRef.current=false; }
-  };
-  const redo = async () => {
-    const next=redoStack.at(-1); if (!next || historyBusyRef.current) return;
-    historyBusyRef.current=true;
-    const generation = ++canvasSaveGenerationRef.current;
-    const current=committedSnapshotRef.current; setUndoStack(s=>[...s.slice(-19),current]); setRedoStack(s=>s.slice(0,-1));
-    try { const data=await next; if (generation !== canvasSaveGenerationRef.current) return; committedSnapshotRef.current=Promise.resolve(data); restoreCanvas(data || null); if (data) localStorage.setItem(drawingKey,data); else localStorage.removeItem(drawingKey); }
-    finally { historyBusyRef.current=false; }
-  };
-  const clearCanvas = () => {
-    const snap=committedSnapshotRef.current; setUndoStack(s=>[...s.slice(-19),snap]); setRedoStack([]);
-    canvasSaveGenerationRef.current++; committedSnapshotRef.current=Promise.resolve(""); restoreCanvas(null); localStorage.removeItem(drawingKey);
-  };
-  const saveImage = () => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = canvas.width; exportCanvas.height = canvas.height;
-    const ctx = exportCanvas.getContext("2d"); if (!ctx) return;
-    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-    ctx.drawImage(canvas, 0, 0);
-    const anchor = document.createElement("a"); anchor.href=exportCanvas.toDataURL("image/png"); anchor.download="reading-note.png"; anchor.click();
-  };
-  const resetNotes = () => {
-    canvasSaveGenerationRef.current++;
-    committedSnapshotRef.current = Promise.resolve("");
-    drawingRef.current = false; drawingPointerRef.current = null;
-    scrollPointerRef.current = null; stylusTouchRef.current = null; pinchRef.current = null;
-    setPenColor(COLORS[0].value); setPenSize(4); setEraserSize(MAX_ERASER_SIZE);
-    setEraser(false); setInputMode("stylus"); setPanMode(false); applyCanvasZoom(1);
-    setUndoStack([]); setRedoStack([]); restoreCanvas(null);
-    canvasWrapRef.current?.scrollTo(0, 0);
-    localStorage.removeItem(drawingKey);
-  };
-  useImperativeHandle(notesRef, () => ({ reset: resetNotes }));
   const resetAll = () => {
     if (!confirm("計測・設定・手書きメモをリセットしますか？読み込んだ教材は残ります。")) return;
     localStorage.removeItem("wpm-reader-v1");
     history.replaceState(null,"",location.pathname + location.search);
     setWpm(160); setShareUrl(""); setShareMessage(""); setQrDataUrl(""); setQrOpen(false);
-    resetNotes(); restart(); setTab("setup");
+    notesRef.current?.reset(); restart(); setTab("setup");
   };
 
-  return <main className={notesOnly ? "embedded-notes" : undefined}>
+  return <main>
     <header className="topbar">
       <div className="topbar-inner">
         <nav aria-label="画面切り替え">
-          {([ ["setup","教材"], ["reader","読解"], ["notes","メモ"] ] as [Tab,string][]).map(([key,label])=><button key={key} className={tab===key?"active":""} aria-current={tab===key?"page":undefined} onClick={()=>setTab(key)}>{label}</button>)}
+          {([ ["setup","教材"], ["reader","読解"], ["notes","メモ"] ] as [PaceTab,string][]).map(([key,label])=><button key={key} className={tab===key?"active":""} aria-current={tab===key?"page":undefined} onClick={()=>openTab(key)}>{label}</button>)}
         </nav>
-        <button className="reset-link" onClick={resetAll}>リセット</button>
+        <div className="pace-session-actions">
+          {started && <button className="pace-checkpoint" disabled={savingPause} onClick={() => playing ? void pause() : start()}>{savingPause ? "保存中…" : playing ? "一時停止" : "再開"}</button>}
+          <button className="reset-link" disabled={savingPause} onClick={resetAll}>リセット</button>
+        </div>
       </div>
     </header>
+    {pauseMessage && <p className="pace-pause-message" role="status">{pauseMessage}</p>}
 
     {tab === "setup" && <section className="setup shell">
       <div className="setup-heading"><div><h1>ペース読解</h1></div><div className="count-card"><strong>{words.length}</strong><span>語</span><small>約 {formatTime(totalSeconds)}</small></div></div>
@@ -711,7 +439,7 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
       <button className="primary start-button" onClick={start} disabled={!words.length}>リーディングを始める <span>→</span></button>
       <details className="pace-material"><summary>本文を編集</summary>
         <label className="field-label" htmlFor="material">教材本文</label>
-        <textarea id="material" className="material" value={text} onChange={e=>{setText(e.target.value);restart();setShareUrl("");setQrDataUrl("");setQrOpen(false);}} maxLength={MAX_TEXT_CHARS} spellCheck={false}/>
+        <textarea id="material" className="material" value={text} onChange={e=>{setText(e.target.value);setShareUrl("");setQrDataUrl("");setQrOpen(false);}} maxLength={MAX_TEXT_CHARS} spellCheck={false}/>
         {(words.length > MAX_WORDS || text.length >= MAX_TEXT_CHARS) && <p role="alert">教材は{MAX_WORDS}語・{MAX_TEXT_CHARS}文字までです。</p>}
       </details>
       <div className="teacher-area"><button className="teacher-toggle" onClick={()=>setTeacherOpen(v=>!v)}>共有リンク・QR {teacherOpen?"−":"＋"}</button>{teacherOpen&&<div className="teacher-form"><label>教材名<input value={teacherTitle} onChange={e=>{setTeacherTitle(e.target.value);setShareUrl("");setQrDataUrl("")}} placeholder="例：Lesson 3 Reading" maxLength={80}/></label><button className="primary" onClick={createShareLink} disabled={shareBusy||!text.trim()}>{shareBusy?"作成中…":"リンク・QRを作成"}</button>{shareUrl&&<><label className="share-result">共有リンク<input value={shareUrl} readOnly onFocus={e=>e.currentTarget.select()}/></label><button className="show-qr" onClick={()=>setQrOpen(true)}>QRコードを大きく表示</button></>}<p>リンクを知っている人は教材を閲覧できます。</p>{shareMessage&&<p className="share-message">{shareMessage}</p>}</div>}</div>
@@ -719,36 +447,15 @@ export default function Home({ notesOnly = false, lesson, onLessonChange, onBusy
     </section>}
 
     {tab === "reader" && <section className="reader shell-wide">
-      <div className="reader-head"><div><h1>{playing ? "読解中" : index >= words.length ? "読了" : index ? "一時停止" : "読解前"}</h1></div><div className="wpm-badge"><strong>{wpm}</strong><span>WPM</span></div></div>
+      <div className="reader-head"><div><h1>{playing ? "読解中" : started ? "一時停止" : words.length > 0 && index >= words.length ? "読了" : "読解前"}</h1></div><div className="wpm-badge"><strong>{wpm}</strong><span>WPM</span></div></div>
       <div className="progress-track"><i style={{width:`${progress}%`}}/></div>
       <div className="stats"><div><span>進捗</span><strong>{Math.round(progress)}%</strong></div><div><span>経過時間</span><strong>{formatTime(elapsed)}</strong></div><div><span>残り時間</span><strong>約 {formatTime(remaining)}</strong></div><div><span>読了語数</span><strong>{index} <small>/ {words.length}</small></strong></div></div>
       <article className="reading-card" aria-live="off">{readingParagraphs.map(paragraph=><p key={paragraph.key} className={paragraph.hasSourceIndent?"source-indented":""}>{paragraph.parts.map(part=>part.kind==="space"?<span className="reading-space" key={part.key}>{part.value}</span>:<span key={part.key} className={part.wordIndex<index?"read":""}>{part.value}</span>)}</p>)}</article>
-      <div className="controls"><button onClick={restart}>↺<span>最初から</span></button><button onClick={rewind}>−10<small>秒</small><span>10秒戻る</span></button>{playing?<button className="play" onClick={pause}>Ⅱ<span>一時停止</span></button>:<button className="play" onClick={index?resume:start}>▶<span>{index?"再開":"再生"}</span></button>}<button onClick={()=>setTab("notes")}>✎<span>メモ</span></button></div>
+      <div className="controls"><button onClick={restart} disabled={savingPause}>↺<span>最初から</span></button><button onClick={rewind} disabled={savingPause}>−10<small>秒</small><span>10秒戻る</span></button>{playing?<button className="play" onClick={() => void pause()}>Ⅱ<span>一時停止</span></button>:<button className="play" onClick={start} disabled={savingPause}>▶<span>{started?"再開":"再生"}</span></button>}<button onClick={()=>openTab("notes")}>✎<span>メモ</span></button></div>
       <div className="speech-panel"><label className="switch"><input type="checkbox" checked={speechOn} disabled={!speechSupported||!voices.length} onChange={e=>{setSpeechOn(e.target.checked); stopSpeech();}}/><i/><span><strong>英語音声読み上げ</strong>{(!speechSupported || !voices.length) && <small>英語音声を利用できません</small>}</span></label><label>英語の声<select value={voiceURI} onChange={e=>{stopSpeech();setVoiceURI(e.target.value)}} disabled={!speechSupported||!voices.length}>{voices.map(v=><option value={v.voiceURI} key={v.voiceURI}>{v.name}（{v.lang}）</option>)}</select></label><label>速度補正<select value={speechRate} onChange={e=>{stopSpeech();setSpeechRate(Number(e.target.value))}}><option value="0.85">ゆっくり</option><option value="1">標準</option><option value="1.15">速め</option></select></label></div>
     </section>}
 
-    {tab === "notes" && <section className="notes shell-wide">
-      <div className="notes-head"><h1>手書きメモ</h1></div>
-      <div className="notes-grid"><div className="paper">
-        <div className="toolrow">
-          <div className="tools">
-            <button className={!panMode&&!eraser?"on":""} onClick={()=>{setPanMode(false);setEraser(false)}} aria-pressed={!panMode&&!eraser}>✎ <span>ペン</span></button>
-            <button className={!panMode&&eraser?"on":""} onClick={()=>{setPanMode(false);setEraser(true)}} aria-pressed={!panMode&&eraser}>▱ <span>消しゴム</span></button>
-            <button className={panMode?"on":""} onClick={()=>setPanMode(value=>!value)} aria-pressed={panMode}>✥ <span>移動</span></button>
-            {COLORS.map(color=><button key={color.value} className={`color ${penColor===color.value?"chosen":""}`} style={{background:color.value}} onClick={()=>{setPenColor(color.value);setEraser(false);setPanMode(false)}} aria-label={`${color.label}のペン`} aria-pressed={penColor===color.value}/>) }
-            <label className="size">細<input aria-label={eraser?"消しゴムの太さ":"ペンの太さ"} type="range" min="2" max={eraser?MAX_ERASER_SIZE:18} value={eraser?eraserSize:penSize} onChange={e=>eraser?setEraserSize(Number(e.target.value)):setPenSize(Number(e.target.value))}/>太 <b>{eraser?eraserSize:penSize}</b></label>
-            <div className="input-modes" role="group" aria-label="手書き入力方法"><span>入力</span><button className={inputMode==="stylus"?"on":""} onClick={()=>{setInputMode("stylus");setPanMode(false)}} aria-pressed={inputMode==="stylus"} aria-label="画面用ペンまたはマウスで書く。指はキャンバスの移動とピンチ拡大に使用">ペン・マウス</button><button className={inputMode==="all"?"on":""} onClick={()=>{setInputMode("all");setPanMode(false)}} aria-pressed={inputMode==="all"} aria-label="指、画面用ペン、マウスで書く。拡大はボタンを使用">指も使う</button></div>
-          </div>
-          <div className="history">
-            <div className="zoom-controls" role="group" aria-label="キャンバスの拡大率"><button onClick={()=>zoomCanvasTo(canvasZoomRef.current-CANVAS_ZOOM_STEP)} disabled={canvasZoom<=MIN_CANVAS_ZOOM} aria-label="キャンバスを縮小">−</button><button className="zoom-value" onClick={()=>zoomCanvasTo(1)} aria-label="キャンバスを100パーセントに戻す">{Math.round(canvasZoom*100)}%</button><button onClick={()=>zoomCanvasTo(canvasZoomRef.current+CANVAS_ZOOM_STEP)} disabled={canvasZoom>=MAX_CANVAS_ZOOM} aria-label="キャンバスを拡大">＋</button></div>
-            <button aria-label="元に戻す" title="元に戻す" onClick={undo} disabled={!undoStack.length}>↶</button><button aria-label="やり直す" title="やり直す" onClick={redo} disabled={!redoStack.length}>↷</button><button onClick={clearCanvas}>全消去</button><button className="save-note" onClick={saveImage}>画像保存 ↓</button>
-          </div>
-        </div>
-        <div className="canvas-wrap" ref={canvasWrapRef} style={{ overflowY: "scroll", overflowX: canvasZoom > 1 ? "auto" : "hidden" }}>
-          <div className="canvas-stage" ref={canvasStageRef}><canvas className={`${inputMode==="all"?"finger-input":"stylus-input"} ${panMode?"pan-input":""}`} ref={canvasRef} onPointerDown={drawStart} onPointerMove={drawMove} onPointerUp={drawEnd} onPointerCancel={drawEnd} aria-label="手書きメモ用キャンバス"/></div>
-        </div>
-      </div></div>
-    </section>}
+    <NotesBoard hidden={tab !== "notes"} notesRef={notesRef} />
     {qrOpen && <div className="qr-backdrop" onClick={()=>setQrOpen(false)}><section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-title" onClick={e=>e.stopPropagation()}><button className="qr-close" onClick={()=>setQrOpen(false)} aria-label="QRコードを閉じる">×</button><h2 id="qr-title">{teacherTitle || "Reading lesson"}</h2>{qrDataUrl?<img src={qrDataUrl} alt={`${teacherTitle || "教材"}の共有QRコード`}/>:<div className="qr-error">{qrError || "QRコードを作成できませんでした。"}</div>}<div className="qr-actions"><button onClick={copyExistingLink}>リンクをコピー</button><button className="primary" onClick={saveQrImage} disabled={!qrDataUrl}>QR画像を保存 ↓</button></div></section></div>}
   </main>;
 }

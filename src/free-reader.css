@@ -151,3 +151,82 @@
 .wpm-slider::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:#c5cde5}.wpm-slider::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:20px;height:20px;border:0;border-radius:50%;background:#3157d5;margin-top:-7px}
 .wpm-slider::-moz-range-track{height:6px;border:0;border-radius:3px;background:#c5cde5}.wpm-slider::-moz-range-thumb{width:20px;height:20px;border:0;border-radius:50%;background:#3157d5}
 .wpm-slider:focus-visible{outline:3px solid #d87531;outline-offset:2px;border-radius:6px}.number-box input:focus-visible{outline:3px solid #d87531;outline-offset:2px}.reset-link{display:block;cursor:pointer;padding:10px 12px}.free-reader .fr-heading{display:flex;align-items:center;justify-content:space-between}
+/* Only the visible area needs a bitmap. The lined paper expands as it is scrolled. */
+.notes .canvas-wrap {
+  overflow: scroll;
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
+}
+.canvas-stage canvas {
+  position: sticky;
+  top: 0;
+  left: 0;
+  inset-inline-end: auto;
+  inset-block-end: auto;
+}
+.note-message {
+  margin: 0;
+  padding: 8px 16px;
+  color: #8a3827;
+  background: #fff;
+}
+.note-image-dialog {
+  max-width: min(94vw, 720px);
+  max-height: 90vh;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+}
+.note-image-dialog::backdrop { background: #16212b99; }
+.note-image-dialog header,
+.note-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.note-image-dialog h2 { margin: 0; font-size: 18px; }
+.note-image-dialog header button,
+.note-image-actions button,
+.note-image-actions a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.note-image-actions { justify-content: flex-start; }
+.note-image-dialog img {
+  display: block;
+  max-width: 100%;
+  max-height: 57vh;
+  object-fit: contain;
+  margin: 12px auto;
+  border: 1px solid var(--line);
+}
+.note-image-dialog p { margin: 10px 0 0; font-size: 13px; }
+.fr-pause-message, .pace-pause-message {
+  color: #40554d;
+  font-size: 13px;
+}
+.fr-pause-message { margin: 6px 0 0; }
+.pace-pause-message { width: 92%; max-width: 1472px; margin: 8px auto 0; }
+.pace-session-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.pace-checkpoint {
+  min-height: 44px;
+  padding: 6px 9px;
+  border: 1px solid #a6b3d1;
+  border-radius: 8px;
+  background: #fff;
+  color: #16346d;
+  font-size: 12px;
+  font-weight: 700;
+}
+.pace-checkpoint:disabled { opacity: .6; }
+@media (max-width: 420px) {
+  .pace-session-actions .reset-link { padding-inline: 6px; }
+}
