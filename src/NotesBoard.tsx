@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
 import type { Ref } from "react";
 import { canDrawPointer, isStylusTouch } from "./canvasInput";
 import { drawStroke, EMPTY_NOTE, encodeNoteImage, extendStroke, loadNote, paintNote, startStroke, storeNote } from "./noteInk";
@@ -16,7 +16,7 @@ const COLORS = [
   { value: "#6f7b84", label: "グレー" },
 ] as const;
 const MAX_ERASER_SIZE = 48;
-const MIN_CANVAS_ZOOM = 0.6;
+const MIN_CANVAS_ZOOM = 0.25;
 const MAX_CANVAS_ZOOM = 3;
 const CANVAS_ZOOM_STEP = 0.25;
 type DrawingInputMode = "stylus" | "all";
@@ -61,6 +61,11 @@ export default function NotesBoard({ embedded = false, hidden = false, notesRef 
   const [imageError, setImageError] = useState("");
   const [preparingImage, setPreparingImage] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const fullscreenButton = useRef<HTMLButtonElement>(null);
+  const pagePosition = useRef({ left: 0, top: 0 });
+  const headingId = useId();
   const [penColor, setPenColor] = useState<string>(COLORS[0].value);
   const [penSize, setPenSize] = useState(4);
   const [eraserSize, setEraserSize] = useState(MAX_ERASER_SIZE);
@@ -549,9 +554,64 @@ export default function NotesBoard({ embedded = false, hidden = false, notesRef 
     window.addEventListener("pagehide", save);
     return () => window.removeEventListener("pagehide", save);
   }, []);
-  return <div className={embedded ? "embedded-notes" : undefined} hidden={hidden}>
+
+  useEffect(() => {
+    if (!fullscreen || !boardRef.current) return;
+    const board = boardRef.current;
+    fullscreenButton.current?.focus({ preventScroll: true });
+    // Leave the same canvas mounted and suspend interaction with the surrounding page.
+    const suspended: HTMLElement[] = [];
+    for (let branch: HTMLElement | null = board; branch && branch !== document.body; branch = branch.parentElement) {
+      for (const sibling of branch.parentElement?.children ?? []) {
+        if (sibling !== branch && sibling instanceof HTMLElement && !sibling.inert) {
+          sibling.inert = true;
+          suspended.push(sibling);
+        }
+      }
+    }
+    const overflow = document.body.style.overflow;
+    const previousPagePosition = pagePosition.current;
+    document.body.style.overflow = "hidden";
+
+    function handleKeyboard(event: KeyboardEvent) {
+      if (board.querySelector("dialog[open]")) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setFullscreen(false);
+      } else if (event.key === "Tab") {
+        const controls = [...board.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), a[href]")];
+        const boundary = event.shiftKey ? controls.at(0) : controls.at(-1);
+        if (document.activeElement === boundary) {
+          event.preventDefault();
+          (event.shiftKey ? controls.at(-1) : controls.at(0))?.focus();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyboard);
+    return () => {
+      window.removeEventListener("keydown", handleKeyboard);
+      suspended.forEach(element => { element.inert = false; });
+      document.body.style.overflow = overflow;
+      window.scrollTo({ ...previousPagePosition, behavior: "instant" });
+      fullscreenButton.current?.focus({ preventScroll: true });
+    };
+  }, [fullscreen]);
+
+  function toggleFullscreen() {
+    if (!fullscreen) pagePosition.current = { left: window.scrollX, top: window.scrollY };
+    setFullscreen(!fullscreen);
+  }
+
+  const Heading = embedded ? "h2" : "h1";
+  return <div ref={boardRef} className={[embedded && "embedded-notes", fullscreen && "notes-overlay"].filter(Boolean).join(" ")} hidden={hidden}
+    role={fullscreen ? "dialog" : undefined} aria-modal={fullscreen || undefined} aria-labelledby={fullscreen ? headingId : undefined}>
     <section className="notes shell-wide">
-      <div className="notes-head"><h1>手書きメモ</h1></div>
+      <div className="notes-head">
+        <Heading id={headingId}>手書きメモ</Heading>
+        <button ref={fullscreenButton} className="notes-fullscreen-button" type="button" onClick={toggleFullscreen}>
+          {fullscreen ? "全画面を終了" : "全画面表示"}
+        </button>
+      </div>
       <div className="notes-grid"><div className="paper">
         <div className="toolrow">
           <div className="tools">

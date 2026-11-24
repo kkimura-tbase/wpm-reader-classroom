@@ -7,6 +7,7 @@ import type { ReadingLesson, ReadingRecord } from "./lesson";
 import { clearReadingSession, loadReadingSession, LOOKUP_LIMITS, saveReadingSession } from "./readingSession";
 
 const NotesBoard = memo(Board);
+const DEFAULT_RATIO = 50;
 
 function storedRecords(): ReadingRecord[] {
   try {
@@ -35,7 +36,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   const notesRef = useRef<NotesControls>(null);
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
-  const [ratio, setRatio] = useState(restored?.ratio ?? 60);
+  const [ratio, setRatio] = useState(restored?.ratio ?? DEFAULT_RATIO);
   const [notesLeft, setNotesLeft] = useState(() => {
     try { return JSON.parse(localStorage.getItem("wpm-free-notes-left") || "false") === true; }
     catch { return false; }
@@ -173,7 +174,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
   function resetAll() {
     if (!confirm("計測・設定・黄色マーカー・手書きメモをリセットしますか？教材と読書記録は残ります。")) return;
     notesRef.current?.reset();
-    resetReading(); setPercent(5); setRatio(60); setNotesLeft(false); setMessage("");
+    resetReading(); setPercent(5); setRatio(DEFAULT_RATIO); setNotesLeft(false); setMessage("");
     if (passageRef.current) passageRef.current.scrollTop = 0;
     window.scrollTo({ top: 0, behavior: "instant" });
   }
@@ -303,7 +304,7 @@ export default function FreeReader({ onBusy, lesson, setLesson }: { onBusy: (bus
           <button className="fr-undo-tap" onClick={() => undoTap(token.index)}>このタップを取り消す</button></div>}
         </aside>}
       </section>
-      <section className="fr-notes"><h2>手書きメモ</h2><NotesBoard embedded notesRef={notesRef} /></section>
+      <div className="fr-notes"><NotesBoard embedded notesRef={notesRef} /></div>
     </div>
     {(marked.length > 0 || tapped.length > 0) && <section className="fr-review"><h2>あとで確認・タップした単語</h2>
         <div className="fr-actions">{words.filter(w => marked.includes(w.index) || tapped.includes(w.index)).map(w => <button key={w.index} onClick={() => { const target = passageRef.current?.querySelector<HTMLElement>(`[data-word-index="${w.index}"]`); target?.scrollIntoView({ block: "center", behavior: "instant" }); requestAnimationFrame(() => choose(w.index)); }}>{marked.includes(w.index) ? "☆ " : ""}{w.word} <small>#{w.index+1}</small></button>)}</div>
